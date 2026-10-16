@@ -192,6 +192,45 @@ Opciones de `render` (todas opcionales):
 
 Los archivos incluyen siempre la zona de silencio de EAN-13 (11 módulos a la izquierda y 7 a la derecha), pintada con el color de fondo.
 
+## Despliegue
+
+### Backend en Render
+
+API pública: https://barcode-generator-api-yti8.onrender.com (`/health`, `/docs`).
+
+El servicio se define en [`render.yaml`](render.yaml) (Blueprint): web service Docker gratuito en `virginia`, construido desde `backend/` (stage `runtime` del Dockerfile), con health check en `/health`.
+
+- **Deploy automático:** cada push a `main` que cambie `backend/**` se despliega **solo si pasa el CI** (`autoDeployTrigger: checksPass`).
+- **Variables:** las de `render.yaml`, más `ALLOWED_ORIGINS`, que se define en el panel de Render (Environment) y nunca en el repo.
+- **IP real del cliente:** uvicorn corre con `--proxy-headers`, así el rate limit usa la IP de `X-Forwarded-For` y no la del proxy de Render.
+
+Comandos útiles con el [CLI de Render](https://render.com/docs/cli):
+
+```bash
+render services                                       # servicios y URLs
+render logs -r srv-db8q8drbc2fs73bq40bg --tail        # logs JSON en vivo
+render deploys list srv-db8q8drbc2fs73bq40bg          # historial de deploys
+render blueprints validate ./render.yaml              # validar el Blueprint
+```
+
+### CI
+
+[`.github/workflows/backend.yml`](.github/workflows/backend.yml) corre en cada cambio de `backend/**`: ruff, mypy, pytest con Ghostscript (falla si la cobertura baja de 75 %) y una prueba de humo de la imagen Docker (`/health` y render PNG/EPS).
+
+### Mediciones en Render (Fase 3)
+
+Plan gratuito, región `virginia`, medido el 2026-10-16.
+
+| Medición | Resultado |
+|---|---|
+| Render en el servidor (`duration_ms` de los logs, 23 muestras) | mediana **0,74 s** (mín. 0,67 s, máx. 1,48 s con escala 5 a 600 DPI) |
+| Render visto desde el cliente (Ecuador, servidor despierto) | PNG ~1,1 s · EPS ~1,25 s (incluye ~0,35 s de red) |
+| `/health` con el servidor despierto | ~0,4 s |
+| **Cold start** (`/health` tras 17 min sin tráfico) | **22,5 s** (el contenedor arranca ~12 s después de la petición) |
+| Primer render después del cold start | 1,3 s |
+
+El cold start queda muy por debajo del timeout de 90 s del cliente (RNF-06). El frontend igual mostrará "Iniciando servidor…" mientras tanto (RF-20).
+
 ## Estado
 
-En construcción: Fase 2 (dominio y API individual) completa; sigue la Fase 3 (despliegue en Render).
+En construcción: Fases 0 a 3 completas (backend desplegado en Render); sigue la Fase 4 (frontend individual y despliegue en Vercel).
