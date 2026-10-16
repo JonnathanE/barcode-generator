@@ -1,0 +1,77 @@
+name: Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - .github/workflows/backend.yml
+  pull_request:
+    paths:
+      - backend/**
+      - .github/workflows/backend.yml
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, tipos y tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Instalar Ghostscript
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ghostscript
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Instalar dependencias
+        run: uv sync --locked
+
+      - name: Ruff
+        run: uv run ruff check . && uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy app tests scripts
+
+      - name: Pytest
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=75
+
+  docker:
+    name: Build y prueba de humo de la imagen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build (stage runtime, el mismo que usa Render)
+        run: docker build --target runtime -t barcode-backend backend
+
+      - name: Arrancar contenedor con $PORT como en Render
+        run: docker run -d --name api -e PORT=10000 -e APP_ENV=production -p 10000:10000 barcode-backend
+
+      - name: /health y render PNG/EPS
+        run: |
+          for i in $(seq 1 30); do curl -fs localhost:10000/health && break; sleep 1; done
+          curl -fs localhost:10000/health | grep -q '"status":"ok"'
+          for format in png eps; do
+            curl -fs -X POST localhost:10000/api/v1/barcodes/ean13/render \
+              -H 'Content-Type: application/json' \
+              -d "{\"code\":\"786123456789\",\"format\":\"$format\"}" -o "out.$format"
+          done
+          file out.png | grep -q 'PNG image'
+          head -c 23 out.eps | grep -q 'EPSF-3.0'
+
+      - name: Logs del contenedor
+        if: always()
+        run: docker logs api

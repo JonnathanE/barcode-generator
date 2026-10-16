@@ -1,0 +1,36 @@
+# Blueprint de Render (https://render.com/docs/blueprint-spec)
+services:
+  - type: web
+    name: barcode-generator-api
+    runtime: docker
+    plan: free
+    region: virginia
+    # Dockerfile y contexto de build dentro de backend/; se construye el último
+    # stage (runtime), que es la imagen de producción.
+    rootDir: backend
+    healthCheckPath: /health
+    # Solo despliega cuando pasan los checks de GitHub Actions (backend.yml).
+    autoDeployTrigger: checksPass
+    # Cambios fuera de backend/ (p. ej., el frontend) no redespliegan la API.
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      - key: APP_ENV
+        value: production
+      # Dominio(s) del frontend separados por comas. Se define en el panel de
+      # Render (no en el repo); nunca "*" en producción (RNF-09).
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "2"
+      - key: MAX_BATCH_ROWS
+        value: "500"
+      - key: RATE_LIMIT_SINGLE
+        value: 60/minute
+      - key: RATE_LIMIT_BATCH
+        value: 5/minute
+      - key: GHOSTSCRIPT_TIMEOUT_SECONDS
+        value: "20"
+      - key: LOG_LEVEL
+        value: INFO
