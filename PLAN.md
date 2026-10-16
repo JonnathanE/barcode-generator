@@ -84,7 +84,7 @@ Aplicación web para generar códigos de barras listos para imprenta, inspirada 
 | RF-16 | Nombre de archivo: `nombre_archivo` si existe (sanitizado), si no el código de 13 dígitos. Colisiones se resuelven con sufijo `_2`, `_3`… |
 | RF-17 | Códigos duplicados se generan una sola vez y se marcan como `duplicado` en el reporte. |
 | RF-18 | Filas vacías se ignoran sin contarse como error. |
-| RF-19 | Si el archivo supera el límite de filas o de tamaño, se rechaza completo con un mensaje que indica el límite. |
+| RF-19 | Si el archivo supera el límite de filas o de tamaño, se rechaza completo con un mensaje que indica el límite. Con PNG muy grandes el límite de filas se reduce por un **presupuesto de píxeles** (1000 MP por lote; p. ej., escala 5 a 600 DPI → 241 filas) para no superar el timeout; el endpoint `/batch/{symbology}/limits` lo informa a la UI. |
 
 ### 3.3 Generales
 
@@ -259,6 +259,7 @@ Códigos de error: `INVALID_CHARACTERS`, `INVALID_LENGTH`, `INVALID_CHECK_DIGIT`
 | POST | `/api/v1/barcodes/{symbology}/validate` | `{ "code": "786123456789" }` | `{ "valid": true, "normalized": "7861234567898", "check_digit": 8 }` |
 | POST | `/api/v1/barcodes/{symbology}/render` | `{ "code", "format": "png"\|"eps", "options": { include_text, scale, bar_height_mm, dpi, bar_color, background } }` | Archivo binario. `?inline=true` para la vista previa; si no, `Content-Disposition: attachment` |
 | GET | `/api/v1/batch/template` | — | `plantilla_codigos.xlsx` |
+| POST | `/api/v1/batch/{symbology}/limits` | `{ "formats": ["png","eps"], "options": {…} }` | `{ "max_rows", "max_upload_mb", "png_width_px", "png_height_px" }` |
 | POST | `/api/v1/batch/{symbology}/validate` | multipart: `file`, `restore_leading_zeros` (bool, opcional, por defecto `false`) | `{ "summary": {total, valid, errors, duplicates}, "rows": [{row, input, normalized, status, message, filename}] }` |
 | POST | `/api/v1/batch/{symbology}/generate` | multipart: `file`, `formats` (lista), `options` (JSON), `restore_leading_zeros` (bool, opcional) | `codigos_<fecha>.zip` |
 

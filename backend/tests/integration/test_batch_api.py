@@ -333,3 +333,66 @@ def test_batch_logs_counts_but_never_codes(caplog: pytest.LogCaptureFixture) -> 
     assert (record.total, record.valid) == (4, 4)  # type: ignore[attr-defined]
     logged = " ".join(str(vars(r)) for r in caplog.records)
     assert "7861234567898" not in logged and "leche-entera" not in logged
+
+
+# ---------- Limits by PNG size ----------
+
+
+@pytest.mark.parametrize(
+    ("formats", "options", "expected"),
+    [
+        (
+            ["png", "eps"],
+            {"scale": 1},
+            {"max_rows": 500, "png_width_px": 456, "png_height_px": 310},
+        ),
+        (
+            ["png"],
+            {"scale": 5, "dpi": 600},
+            {"max_rows": 241, "png_width_px": 4446, "png_height_px": 930},
+        ),
+        (
+            ["eps"],
+            {"scale": 5, "dpi": 600},
+            {"max_rows": 500, "png_width_px": None, "png_height_px": None},
+        ),
+    ],
+)
+def test_limits_endpoint(
+    formats: list[str], options: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    response = client.post(
+        "/api/v1/batch/ean13/limits", json={"formats": formats, "options": options}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {**expected, "max_upload_mb": 2}
+
+
+def test_limits_require_a_format() -> None:
+    response = client.post("/api/v1/batch/ean13/limits", json={"formats": []})
+
+    assert response.status_code == 422
+
+
+def test_generate_rejects_png_batches_over_the_pixel_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import batch
+
+    monkeypatch.setattr(batch, "PNG_PIXEL_BUDGET", 456 * 310 * 3)  # 3 PNGs at scale 1
+
+    response = client.post(
+        GENERATE,
+        files=upload("validos.xlsx"),
+        data={"formats": "png", "options": json.dumps({"scale": 1})},
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "TOO_MANY_ROWS"
+    assert error["message"] == (
+        "Con estas opciones (PNG de 456 x 310 px) puedes generar hasta 3 códigos por lote y "
+        "el archivo tiene 4. Reduce la escala o el DPI, o genera solo EPS."
+    )
+    assert error["details"]["max_rows"] == 3

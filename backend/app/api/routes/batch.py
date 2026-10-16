@@ -12,9 +12,15 @@ from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.rate_limit import batch_limit, limiter, single_limit
 from app.schemas.barcodes import RenderOptionsIn
-from app.schemas.batch import BatchRowOut, BatchSummaryOut, BatchValidateResponse
+from app.schemas.batch import (
+    BatchLimitsRequest,
+    BatchLimitsResponse,
+    BatchRowOut,
+    BatchSummaryOut,
+    BatchValidateResponse,
+)
 from app.schemas.errors import error_responses
-from app.services.batch import BatchReport, build_zip, validate_batch
+from app.services.batch import BatchReport, batch_limits, build_zip, validate_batch
 from app.services.excel_reader import read_sheet
 from app.services.renderer import RenderError
 from app.services.template import TEMPLATE_FILENAME, build_template
@@ -55,6 +61,25 @@ async def download_template(
         content=_template(),
         media_type=XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{TEMPLATE_FILENAME}"'},
+    )
+
+
+@router.post("/{symbology}/limits", responses=error_responses(404, 422, 429))
+@limiter.limit(single_limit)
+async def get_batch_limits(
+    request: Request,  # required by slowapi to read the client IP
+    symbology: str,
+    body: BatchLimitsRequest,
+) -> BatchLimitsResponse:
+    """Máximo de filas para estas opciones: los PNG muy grandes lo reducen (RF-19)."""
+    resolved = registry.get(symbology)
+    settings = get_settings()
+    limits = batch_limits(resolved, body.formats, body.options.to_domain(), settings.max_batch_rows)
+    return BatchLimitsResponse(
+        max_rows=limits.max_rows,
+        max_upload_mb=settings.max_upload_mb,
+        png_width_px=limits.png_width_px,
+        png_height_px=limits.png_height_px,
     )
 
 
@@ -121,11 +146,24 @@ async def generate_batch_zip(
             "El archivo no tiene códigos válidos para generar.",
             {"summary": _summary_dict(report)},
         )
+    domain_options = render_options.to_domain()
+    limits = batch_limits(resolved, formats, domain_options, get_settings().max_batch_rows)
+    if report.summary.valid > limits.max_rows:
+        raise AppError(
+            ErrorCode.TOO_MANY_ROWS,
+            f"Con estas opciones (PNG de {limits.png_width_px} x {limits.png_height_px} px) "
+            f"puedes generar hasta {limits.max_rows} códigos por lote y el archivo tiene "
+            f"{report.summary.valid}. Reduce la escala o el DPI, o genera solo EPS.",
+            {
+                "max_rows": limits.max_rows,
+                "valid": report.summary.valid,
+                "png_width_px": limits.png_width_px,
+                "png_height_px": limits.png_height_px,
+            },
+        )
     try:
         # Ghostscript and ZIP compression are blocking: keep them off the event loop.
-        archive = await run_in_threadpool(
-            build_zip, resolved, report, formats, render_options.to_domain()
-        )
+        archive = await run_in_threadpool(build_zip, resolved, report, formats, domain_options)
     except RenderError:
         # No Ghostscript output in logs: it can contain the hex-encoded codes (RNF-13).
         logger.error("batch_render_failed", extra={"rows": report.summary.valid})
