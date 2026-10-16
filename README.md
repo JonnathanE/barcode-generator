@@ -136,6 +136,8 @@ Los tests de generación necesitan Ghostscript; si no está instalado se omiten 
 
 Para generar archivos de muestra y medir tiempos: `cd backend && uv run python -m scripts.spike_render` (los deja en `backend/scripts/out/`, ignorado por git).
 
+Los `.xlsx` de prueba del modo masivo están en `backend/tests/fixtures/` (válidos, inválidos, numéricos, notación científica, duplicados, filas vacías, nombres peligrosos, sin columna `codigo`, archivos que no son Excel o tienen macros, y un lote de 500). Se regeneran con `uv run python -m tests.fixtures.build_fixtures`.
+
 ### Problemas comunes
 
 | Síntoma | Solución |
@@ -169,6 +171,29 @@ El renderer (`backend/app/services/renderer.py`) usa la **Opción A** de `PLAN.m
 
 Opciones por defecto: escala 2, 300 DPI, con texto. El piso de cada llamada es el arranque de Ghostscript (~0,4 s con 0,1 CPU). El EPS pesa 171 KB porque `eps2write` siempre incluye su prolog genérico (~165 KB); el dibujo en sí ocupa ~9 KB, y comprimido en ZIP el archivo baja a ~46 KB.
 
+### Generación masiva y mediciones (Fase 5)
+
+Arrancar Ghostscript y cargar BWIPP cuesta ~0,9 s por llamada con 0,1 CPU, y dibujar un código ~0,1 s. Por eso `render_many()` genera **muchos códigos por proceso** (bloques de 100):
+
+- **PNG:** Ghostscript escribe una página por código; los PNG se separan leyendo sus *chunks*. Con colores por defecto se devuelven tal cual (ya traen el DPI); con colores se colorean con Pillow.
+- **EPS:** `eps2write` no admite varias páginas por stdout, así que se usa `ps2write` y cada página se convierte en un EPS independiente con el mismo prolog y las banderas de `eps2write` (`/SetPageSize false`, `/EPS2Write true`). Verificado con Ghostscript 10.02, 10.05 y 10.06.
+- **ZIP en memoria:** PNG sin recomprimir (ya están comprimidos) y EPS con deflate nivel 1 (4 veces más rápido que el nivel por defecto, ~20 % más grande).
+- **Límite por tamaño de PNG:** un presupuesto de 1000 megapíxeles por lote baja el máximo de filas solo con PNG muy grandes (escala 5 a 600 DPI → 241 filas). `POST /api/v1/batch/{symbology}/limits` lo informa a la UI.
+
+Medido en Render (plan gratuito), PNG + EPS, tiempos vistos desde el cliente (incluye subir el Excel y descargar el ZIP):
+
+| Lote | Opciones | Tiempo | ZIP |
+|---|---|---|---|
+| Validar 500 filas | — | 0,6 s | — |
+| 50 filas | escala 1, 300 DPI | 4,8 s | 3 MB |
+| 200 filas | escala 1, 300 DPI | 14,9 s | 12 MB |
+| 500 filas | escala 1, 300 DPI | 36,2 s | 30 MB |
+| 241 filas (máximo permitido) | escala 5, 600 DPI | 99,5 s | 22 MB |
+
+Todos los casos quedan dentro del timeout de 180 s del cliente (RNF-06), así que `MAX_BATCH_ROWS=500` se mantiene. Memoria pico medida en local con `--cpus=0.1 -m 512m`: 175 MB para 500 filas. Antes de procesar por bloques, 500 filas tardaban ~17 minutos.
+
+Los archivos subidos nunca tocan el disco: se rechazan por `Content-Length` antes de leerlos (413) y Starlette los mantiene en memoria (por defecto pasa a disco los de más de 1 MB). Un test con un *audit hook* de Python verifica que leer, validar y generar no abre ningún archivo para escritura.
+
 ## API
 
 Documentación interactiva en `/docs` (Swagger). Todos los errores responden `{ "error": { "code", "message", "details" } }`.
@@ -179,6 +204,10 @@ Documentación interactiva en `/docs` (Swagger). Todos los errores responden `{ 
 | GET | `/api/v1/symbologies` | Simbologías y formatos disponibles |
 | POST | `/api/v1/barcodes/{symbology}/validate` | Normaliza y valida (`{"code": "786-1234-56789"}` → `7861234567898`) |
 | POST | `/api/v1/barcodes/{symbology}/render` | PNG o EPS; `?inline=true` para la vista previa |
+| GET | `/api/v1/batch/template` | Plantilla `plantilla_codigos.xlsx` |
+| POST | `/api/v1/batch/{symbology}/limits` | Máximo de filas y tamaño de PNG para unas opciones |
+| POST | `/api/v1/batch/{symbology}/validate` | Paso 1: reporte por fila (multipart: `file`, `restore_leading_zeros`) |
+| POST | `/api/v1/batch/{symbology}/generate` | Paso 2: ZIP con `png/`, `eps/` y `reporte.csv` (multipart: `file`, `formats`, `options` en JSON, `restore_leading_zeros`) |
 
 Opciones de `render` (todas opcionales):
 
@@ -245,4 +274,4 @@ El cold start queda muy por debajo del timeout de 90 s del cliente (RNF-06). Ver
 
 ## Estado
 
-En construcción: Fases 0 a 4 completas (generación individual desplegada en Vercel + Render); sigue la Fase 5 (backend de generación masiva).
+En construcción: Fases 0 a 5 completas (backend de generación masiva desplegado); sigue la Fase 6 (frontend de generación masiva).

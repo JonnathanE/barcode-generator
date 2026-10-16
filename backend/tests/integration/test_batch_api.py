@@ -250,9 +250,16 @@ def test_generate_returns_zip_with_both_formats() -> None:
     assert len([n for n in names if n.startswith("png/")]) == 4
     assert len([n for n in names if n.startswith("eps/")]) == 4
     assert "reporte.csv" in names
-    image = Image.open(io.BytesIO(archive.read("png/leche-entera.png")))
-    assert [r.text for r in zxingcpp.read_barcodes(image)] == ["7861234567898"]
-    assert image.info["dpi"] == pytest.approx((150, 150), abs=0.05)
+    expected = {
+        "png/leche-entera.png": "7861234567898",
+        "png/9780306406157.png": "9780306406157",
+        "png/galletas.png": "4006381333931",
+        "png/5901234123457.png": "5901234123457",
+    }
+    for name, code in expected.items():  # every PNG in the ZIP decodes to its code
+        image = Image.open(io.BytesIO(archive.read(name)))
+        assert [r.text for r in zxingcpp.read_barcodes(image)] == [code]
+        assert image.info["dpi"] == pytest.approx((150, 150), abs=0.05)
 
 
 @needs_gs
