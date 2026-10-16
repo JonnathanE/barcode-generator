@@ -1,6 +1,6 @@
 import { MonitorIcon, MoonIcon, SunIcon } from 'lucide-react'
-import { useTheme } from 'next-themes'
 
+import { useTheme } from '@/components/theme-context'
 import { Button } from '@/components/ui/button'
 
 const OPTIONS = [
@@ -10,7 +10,7 @@ const OPTIONS = [
 ] as const
 
 export function ThemeToggle() {
-  const { theme = 'system', setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
 
   return (
     <fieldset className="bg-muted flex rounded-lg p-0.5">

@@ -25,6 +25,8 @@ export const barcodeOptionsSchema = z.object({
 
 export type BarcodeOptionsValues = z.infer<typeof barcodeOptionsSchema>
 
+// Lowercase: the canonical value of <input type="color">, which replaces anything
+// it doesn't consider a valid color with black.
 export const DEFAULT_OPTIONS: BarcodeOptionsValues = {
   include_text: true,
   scale: 2,
@@ -32,7 +34,7 @@ export const DEFAULT_OPTIONS: BarcodeOptionsValues = {
   dpi: 300,
   bar_color: '#000000',
   background_kind: 'color',
-  background_color: '#FFFFFF',
+  background_color: '#ffffff',
 }
 
 export function toApiOptions(values: BarcodeOptionsValues): RenderOptions {

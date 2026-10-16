@@ -35,7 +35,7 @@ La primera vez tarda unos minutos (descarga imágenes, instala Ghostscript y las
 | http://localhost:8000/health | Estado y versión del backend |
 | http://localhost:5173 | Frontend (Vite) |
 
-**¿Cuándo usar `--build`?** La primera vez y cada vez que cambien dependencias (`backend/pyproject.toml`, `backend/uv.lock` o `backend/Dockerfile`). Si solo cambias código, basta con `docker compose up`. El frontend instala sus dependencias (`pnpm install`) en cada arranque, así que no necesita reconstruirse.
+**¿Cuándo usar `--build`?** La primera vez y cada vez que cambien dependencias (`backend/pyproject.toml`, `backend/uv.lock` o `backend/Dockerfile`). Si solo cambias código, basta con `docker compose up`. El frontend instala sus dependencias (`pnpm install`) en cada arranque, así que no necesita reconstruirse: si cambian `frontend/package.json` o `pnpm-lock.yaml` (p. ej., tras un `git pull`), basta con `docker compose restart frontend`.
 
 **Recarga automática:** el código se monta como volumen. Los cambios en `backend/app/` reinician uvicorn en uno o dos segundos y los cambios en `frontend/src/` se ven al instante en el navegador.
 
@@ -142,6 +142,7 @@ Para generar archivos de muestra y medir tiempos: `cd backend && uv run python -
 |---|---|
 | `port is already allocated` al levantar | Otro proceso usa el 8000 o el 5173. Detenlo, o cambia el puerto de la izquierda en `docker-compose.yml` (p. ej., `"8001:8000"`) |
 | `ModuleNotFoundError` en el backend tras un `git pull` | Cambiaron dependencias: `docker compose up --build` (o `uv sync` sin Docker) |
+| El frontend muestra una página en blanco o errores 500 de Vite tras un `git pull` | Cambiaron dependencias del frontend: `docker compose restart frontend` (o `pnpm install` sin Docker) |
 | `Ghostscript (gs) no está instalado` | Opción B sin Ghostscript: instálalo (ver requisitos) |
 | `429 RATE_LIMITED` mientras pruebas | Sube `RATE_LIMIT_SINGLE` en `backend/.env` y `docker compose restart backend` |
 | El frontend no reacciona a cambios en WSL | Mantén el proyecto dentro del sistema de archivos de Linux (`~/...`), no en `/mnt/c/...` |
