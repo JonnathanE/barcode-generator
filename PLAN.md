@@ -63,7 +63,7 @@ Aplicación web para generar códigos de barras listos para imprenta, inspirada 
 | RF-02 | Se rechazan entradas con caracteres no numéricos, longitud distinta de 12/13 o dígito de control incorrecto, con un mensaje claro que indique el dígito esperado. |
 | RF-03 | Se ignoran espacios y guiones al inicio, final o intermedios (`786-1234-56789` → `786123456789`). |
 | RF-04 | Vista previa PNG que se actualiza al escribir (debounce de 300 ms), solo cuando la entrada es válida. |
-| RF-05 | Opciones configurables: mostrar texto legible (sí/no, por defecto sí), escala (1–5, por defecto 2), altura de barras en mm (10–50, por defecto 22.85 mm) y DPI para PNG (150, 300, 600; por defecto 300). |
+| RF-05 | Opciones configurables: mostrar texto legible (sí/no, por defecto sí), escala (1–5, por defecto 2), altura de barras en mm (10–50, por defecto 22.85 mm) y DPI para PNG (150, 300, 600; por defecto 300). La **escala es magnificación física**: ancho de módulo = 0,33 mm × escala (1 = 100 % GS1, 2 = 200 %) y aplica igual a PNG y EPS; la altura de barras es la altura final real; el DPI solo define la resolución del PNG (y se guarda como metadato `pHYs`). Escalas > 2 quedan fuera del rango GS1 (80 %–200 %) y la UI lo advierte. |
 | RF-06 | Descarga en **PNG** y **EPS vectorial**. Nombre del archivo: `<codigo13>.png` / `<codigo13>.eps`. |
 | RF-07 | La validación del dígito de control también se ejecuta en el cliente para retroalimentación instantánea; el backend es la fuente de verdad. |
 
@@ -254,7 +254,7 @@ Códigos de error: `INVALID_CHARACTERS`, `INVALID_LENGTH`, `INVALID_CHECK_DIGIT`
 |---|---|---|---|
 | GET | `/health` | — | `{"status":"ok","version":"x.y.z"}` |
 | GET | `/api/v1/symbologies` | — | Lista de simbologías y formatos soportados |
-| POST | `/api/v1/barcodes/{symbology}/validate` | `{ "code": "786123456789" }` | `{ "valid": true, "normalized": "7861234567897", "check_digit": 7 }` |
+| POST | `/api/v1/barcodes/{symbology}/validate` | `{ "code": "786123456789" }` | `{ "valid": true, "normalized": "7861234567898", "check_digit": 8 }` |
 | POST | `/api/v1/barcodes/{symbology}/render` | `{ "code", "format": "png"\|"eps", "options": { include_text, scale, bar_height_mm, dpi } }` | Archivo binario. `?inline=true` para la vista previa; si no, `Content-Disposition: attachment` |
 | GET | `/api/v1/batch/template` | — | `plantilla_codigos.xlsx` |
 | POST | `/api/v1/batch/{symbology}/validate` | multipart: `file`, `restore_leading_zeros` (bool, opcional, por defecto `false`) | `{ "summary": {total, valid, errors, duplicates}, "rows": [{row, input, normalized, status, message, filename}] }` |
@@ -304,7 +304,7 @@ VITE_API_URL=http://localhost:8000
 **Tareas**
 1. `services/renderer.py`: función que recibe código EAN-13 + opciones y devuelve bytes PNG (vía `treepoem`).
 2. Implementar la **Opción A** de la sección 5.3 para EPS vectorial. Si no es viable, documentar por qué en el README e implementar la **Opción B**.
-3. Script `backend/scripts/spike_render.py` que genere `7861234567897.png` y `.eps` en una carpeta local de pruebas (solo en el spike; nunca en la app).
+3. Script `backend/scripts/spike_render.py` que genere `7861234567898.png` y `.eps` en una carpeta local de pruebas (solo en el spike; nunca en la app).
 4. Tests: decodificar el PNG con `zxing-cpp`; verificar cabecera EPSF, `BoundingBox` y ausencia de raster en el EPS.
 
 **Criterios de aceptación**
