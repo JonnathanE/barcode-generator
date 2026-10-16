@@ -1,4 +1,5 @@
-import { z } from 'zod'
+// zod/mini: same validation, tree-shakable API (zod was ~19 % of the main bundle).
+import * as z from 'zod/mini'
 
 import type { RenderOptions } from '@/api/client'
 
@@ -10,17 +11,18 @@ export const MODULE_MM = 0.33
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/
 
+const hexColor = () => z.string().check(z.regex(HEX_COLOR, 'Usa un color en formato #RRGGBB.'))
+
 export const barcodeOptionsSchema = z.object({
   include_text: z.boolean(),
-  scale: z.number().int().min(1).max(5),
+  scale: z.int().check(z.gte(1), z.lte(5)),
   bar_height_mm: z
     .number({ error: 'Ingresa una altura en milímetros.' })
-    .min(10, 'La altura mínima es 10 mm.')
-    .max(50, 'La altura máxima es 50 mm.'),
-  dpi: z.union([z.literal(150), z.literal(300), z.literal(600)]),
-  bar_color: z.string().regex(HEX_COLOR, 'Usa un color en formato #RRGGBB.'),
+    .check(z.gte(10, 'La altura mínima es 10 mm.'), z.lte(50, 'La altura máxima es 50 mm.')),
+  dpi: z.literal([150, 300, 600]),
+  bar_color: hexColor(),
   background_kind: z.enum(['color', 'transparent']),
-  background_color: z.string().regex(HEX_COLOR, 'Usa un color en formato #RRGGBB.'),
+  background_color: hexColor(),
 })
 
 export type BarcodeOptionsValues = z.infer<typeof barcodeOptionsSchema>

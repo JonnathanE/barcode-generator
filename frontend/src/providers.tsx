@@ -4,7 +4,6 @@ import type { ReactNode } from 'react'
 import { ServerStatusProvider } from '@/components/ServerStatusProvider'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { Toaster } from '@/components/ui/sonner'
-import { TooltipProvider } from '@/components/ui/tooltip'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,12 +16,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <TooltipProvider>
-          <ServerStatusProvider>
-            {children}
-            <Toaster richColors closeButton />
-          </ServerStatusProvider>
-        </TooltipProvider>
+        <ServerStatusProvider>
+          {children}
+          <Toaster richColors closeButton />
+        </ServerStatusProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

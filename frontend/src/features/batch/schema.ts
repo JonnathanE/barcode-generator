@@ -1,10 +1,10 @@
-import { z } from 'zod'
+import * as z from 'zod/mini'
 
 import { barcodeOptionsSchema, DEFAULT_OPTIONS } from '@/lib/barcode-options'
 
-export const batchFormSchema = barcodeOptionsSchema.extend({
+export const batchFormSchema = z.extend(barcodeOptionsSchema, {
   symbology: z.string(),
-  formats: z.array(z.enum(['png', 'eps'])).min(1, 'Elige al menos un formato.'),
+  formats: z.array(z.enum(['png', 'eps'])).check(z.minLength(1, 'Elige al menos un formato.')),
   restore_leading_zeros: z.boolean(),
 })
 

@@ -13,7 +13,7 @@ export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
 
   return (
-    <fieldset className="bg-muted flex rounded-lg p-0.5">
+    <fieldset className="bg-muted flex shrink-0 rounded-lg p-0.5">
       <legend className="sr-only">Tema</legend>
       {OPTIONS.map(({ value, label, Icon }) => (
         <Button

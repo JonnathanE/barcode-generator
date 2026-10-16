@@ -15,10 +15,12 @@ const BatchPage = lazy(() =>
 function App() {
   return (
     <div className="flex min-h-svh flex-col">
+      {/* No flex-wrap: the header height must not depend on text width, otherwise the
+          web font swap (wider fallback font) reflows it and shifts the page (CLS). */}
       <header className="border-b">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <h1 className="text-lg font-semibold">Generador de Códigos de Barras</h1>
+        <div className="mx-auto flex max-w-5xl items-start justify-between gap-3 px-4 py-3">
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold sm:text-lg">Generador de Códigos de Barras</h1>
             <ServerStatus />
           </div>
           <ThemeToggle />
