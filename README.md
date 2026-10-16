@@ -194,6 +194,16 @@ Todos los casos quedan dentro del timeout de 180 s del cliente (RNF-06), así qu
 
 Los archivos subidos nunca tocan el disco: se rechazan por `Content-Length` antes de leerlos (413) y Starlette los mantiene en memoria (por defecto pasa a disco los de más de 1 MB). Un test con un *audit hook* de Python verifica que leer, validar y generar no abre ningún archivo para escritura.
 
+### Frontend del modo masivo (Fase 6)
+
+La pestaña **«Masivo desde Excel»** se carga bajo demanda (`React.lazy`) y guía en tres pasos:
+
+1. **Plantilla:** descarga `plantilla_codigos.xlsx`.
+2. **Subir y validar:** arrastrar y soltar o elegir el archivo (un `<label>` con un `<input type="file">` enfocable, así funciona con teclado). El navegador revisa extensión y tamaño; el backend valida el contenido. Se valida al elegir el archivo y de nuevo al cambiar «Restaurar ceros iniciales» o la simbología. Resumen, aviso con cómo corregir los errores y tabla con filtros (Todos / Válidos / Con error / Duplicados) y páginas de 50 filas; en pantallas chicas cada fila es una tarjeta con su estado y mensaje.
+3. **Generar:** formatos, opciones y el máximo de filas para esas opciones (`/limits`). El botón se deshabilita indicando el motivo (sin filas válidas, sin formato, límite excedido). Progreso indeterminado con «Generando N códigos…» y descarga del ZIP.
+
+Verificado desde Vercel con todos los fixtures de `backend/tests/fixtures/`: cada uno muestra el resumen o el error esperado (columna faltante, archivo que no es Excel, macros, límite de solicitudes), y el ZIP generado se decodifica.
+
 ## API
 
 Documentación interactiva en `/docs` (Swagger). Todos los errores responden `{ "error": { "code", "message", "details" } }`.
@@ -274,4 +284,4 @@ El cold start queda muy por debajo del timeout de 90 s del cliente (RNF-06). Ver
 
 ## Estado
 
-En construcción: Fases 0 a 5 completas (backend de generación masiva desplegado); sigue la Fase 6 (frontend de generación masiva).
+En construcción: Fases 0 a 6 completas (generación individual y masiva en producción); sigue la Fase 7 (endurecimiento y documentación).
