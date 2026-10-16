@@ -40,9 +40,34 @@ El renderer (`backend/app/services/renderer.py`) usa la **Opción A** de `PLAN.m
 |---|---|---|
 | 1 CPU | 0,09 s | 0,08 s |
 | 0,1 CPU (como Render free) | 1,11 s | 1,00 s |
+| 0,1 CPU vía API (Fase 2) | ~1,1 s (escala 5 a 600 DPI: ~2 s) | ~1,0 s |
 
 Opciones por defecto: escala 2, 300 DPI, con texto. El piso de cada llamada es el arranque de Ghostscript (~0,4 s con 0,1 CPU). El EPS pesa 171 KB porque `eps2write` siempre incluye su prolog genérico (~165 KB); el dibujo en sí ocupa ~9 KB, y comprimido en ZIP el archivo baja a ~46 KB.
 
+## API
+
+Documentación interactiva en `/docs` (Swagger). Todos los errores responden `{ "error": { "code", "message", "details" } }`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/health` | Estado y versión |
+| GET | `/api/v1/symbologies` | Simbologías y formatos disponibles |
+| POST | `/api/v1/barcodes/{symbology}/validate` | Normaliza y valida (`{"code": "786-1234-56789"}` → `7861234567898`) |
+| POST | `/api/v1/barcodes/{symbology}/render` | PNG o EPS; `?inline=true` para la vista previa |
+
+Opciones de `render` (todas opcionales):
+
+| Opción | Valores | Por defecto |
+|---|---|---|
+| `include_text` | `true` / `false` | `true` |
+| `scale` | 1–5 (módulo = 0,33 mm × escala; GS1 admite hasta 2) | `2` |
+| `bar_height_mm` | 10–50 (altura final real) | `22.85` |
+| `dpi` | 150, 300, 600 (solo PNG) | `300` |
+| `bar_color` | `#RRGGBB` (barras y texto) | `#000000` |
+| `background` | `#RRGGBB` o `transparent` | `#FFFFFF` |
+
+Los archivos incluyen siempre la zona de silencio de EAN-13 (11 módulos a la izquierda y 7 a la derecha), pintada con el color de fondo.
+
 ## Estado
 
-En construcción: Fase 1 (spike de generación PNG + EPS vectorial).
+En construcción: Fase 2 (dominio y API individual) completa; sigue la Fase 3 (despliegue en Render).
