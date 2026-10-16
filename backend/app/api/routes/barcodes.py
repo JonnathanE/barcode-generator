@@ -1,9 +1,10 @@
 import logging
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.core.errors import AppError, ErrorCode
+from app.core.rate_limit import limiter, single_limit
 from app.schemas.barcodes import RenderRequest, SymbologyOut, ValidateRequest, ValidateResponse
 from app.schemas.errors import error_responses
 from app.services.renderer import RenderError, render
@@ -26,7 +27,12 @@ async def list_symbologies() -> list[SymbologyOut]:
     "/barcodes/{symbology}/validate",
     responses=error_responses(404, 422, 429),
 )
-async def validate_code(symbology: str, body: ValidateRequest) -> ValidateResponse:
+@limiter.limit(single_limit)
+async def validate_code(
+    request: Request,  # required by slowapi to read the client IP
+    symbology: str,
+    body: ValidateRequest,
+) -> ValidateResponse:
     normalized = registry.get(symbology).normalize(body.code)
     return ValidateResponse(valid=True, normalized=normalized, check_digit=int(normalized[-1]))
 
@@ -42,7 +48,9 @@ async def validate_code(symbology: str, body: ValidateRequest) -> ValidateRespon
         **error_responses(404, 422, 429, 500),
     },
 )
+@limiter.limit(single_limit)
 async def render_code(
+    request: Request,  # required by slowapi to read the client IP
     symbology: str,
     body: RenderRequest,
     inline: bool = Query(False, description="`true` para la vista previa (sin descarga)."),

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -24,6 +24,12 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _no_wildcard_origin_in_production(self) -> "Settings":
+        if self.app_env == "production" and "*" in self.allowed_origins:
+            raise ValueError("ALLOWED_ORIGINS no puede ser '*' en producción (RNF-09)")
+        return self
 
 
 @lru_cache

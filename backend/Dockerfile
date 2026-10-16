@@ -42,4 +42,7 @@ COPY app ./app
 USER app
 EXPOSE 8000
 # Render inyecta $PORT; forma shell para expandir la variable.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# --proxy-headers: la IP del cliente sale de X-Forwarded-For (proxy de Render), necesario
+# para el rate limiting por IP. Seguro porque el contenedor solo recibe tráfico del proxy.
+ENV FORWARDED_ALLOW_IPS="*"
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --no-access-log"]
