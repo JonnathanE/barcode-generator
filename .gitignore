@@ -1,0 +1,31 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# --- Node ---
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# --- Entorno ---
+.env
+.env.*
+!.env.example
+
+# --- Salidas locales del spike (nunca en la app) ---
+backend/scripts/out/
+
+# --- Editores / SO ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
