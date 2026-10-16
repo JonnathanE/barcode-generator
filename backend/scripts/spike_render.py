@@ -11,7 +11,9 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from app.services.renderer import RenderOptions, render_ean13_eps, render_ean13_png
+from app.services.renderer import render
+from app.symbologies.base import OutputFormat, RenderOptions
+from app.symbologies.registry import registry
 
 CODE = "7861234567898"
 OUT_DIR = Path(__file__).parent / "out"
@@ -39,8 +41,9 @@ def main() -> None:
     options = RenderOptions()
     OUT_DIR.mkdir(exist_ok=True)
 
-    png = measure("PNG", lambda: render_ean13_png(CODE, options), args.runs)
-    eps = measure("EPS", lambda: render_ean13_eps(CODE, options), args.runs)
+    ean13 = registry.get("ean13")
+    png = measure("PNG", lambda: render(ean13, CODE, OutputFormat.PNG, options), args.runs)
+    eps = measure("EPS", lambda: render(ean13, CODE, OutputFormat.EPS, options), args.runs)
 
     (OUT_DIR / f"{CODE}.png").write_bytes(png)
     (OUT_DIR / f"{CODE}.eps").write_bytes(eps)

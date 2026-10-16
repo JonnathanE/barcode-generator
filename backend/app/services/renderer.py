@@ -5,53 +5,49 @@ Pipeline (PLAN.md §5.3, option A):
 * The PostScript program is the minimal BWIPP subset for the encoder (``barcode.ps``
   shipped with ``treepoem``, filtered by its ``--REQUIRES`` metadata) plus the
   invocation. Parsing the full 1 MB library dominated render time on 0.1 CPU.
-* EPS: ``gs -sDEVICE=eps2write`` flattens the program into a vector EPS with a
-  tight ``%%BoundingBox``; text is converted to outlines (``-dNoOutputFonts``) so
-  print shops don't depend on font substitution. Exact physical size.
-* PNG: one ``pnggray`` pass on a page large enough for the symbol, then cropped
-  with Pillow. Modules are snapped to whole pixels (and BWIPP's ink spread is
-  disabled) so bars don't get uneven widths at low DPI.
+* The page is exactly the symbol's extent including quiet zones (RF-06a), so the
+  output needs no cropping and the background covers the quiet zones.
+* EPS: ``gs -sDEVICE=eps2write`` flattens the program into vector paths; text is
+  converted to outlines (``-dNoOutputFonts``) so print shops don't depend on font
+  substitution. Exact physical size.
+* PNG: one ``pnggray`` pass (black on white), colorized afterwards with Pillow using
+  the ink coverage as mask, so antialiased text edges stay right on any background,
+  transparent included. Modules are snapped to whole pixels (and BWIPP's ink spread
+  is disabled) so bars don't get uneven widths at low DPI.
 
 Every Ghostscript call uses ``-dSAFER``, stdin/stdout (no temp files) and a timeout.
 """
 
 import io
+import math
 import re
 import shutil
 import subprocess
 from binascii import hexlify
-from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 
 from PIL import Image, ImageOps
 
 from app.core.config import get_settings
-
-GS1_MODULE_MM = 0.33
-"""Nominal EAN-13 module width (X-dimension) at 100 % magnification."""
-
-_MM_PER_POINT = 25.4 / 72
-"""BWIPP draws one module per PostScript point (before magnification)."""
-
-_EPS_PAGE_POINTS = 3000
-_EPS_ORIGIN_POINTS = 200
-
-# EAN-13 extent in modules around the origin: leading digit/text sit left of and
-# below the bars; 95 modules of bars. Used to size the PNG page.
-_EAN13_MARGIN_MODULES = 20
-_EAN13_PAGE_WIDTH_MODULES = 140
-_EAN13_PAGE_EXTRA_HEIGHT_MODULES = 40
+from app.symbologies.base import (
+    MM_PER_POINT,
+    TRANSPARENT,
+    OutputFormat,
+    RenderOptions,
+    Symbology,
+)
 
 _GS_BASE_ARGS = ("-dSAFER", "-dQUIET", "-dNOPAUSE", "-dBATCH")
 
 _PROGRAM_TEMPLATE = """\
 %!PS
 {bwipp}
+{background}
 /Helvetica findfont 10 scalefont setfont
 {{
-  {origin} {origin} translate
-  {magnification} {magnification} scale
+  {origin_x} {origin_y} translate
+  {module_points} {module_points} scale
   0 0 moveto
   {data} {options} {encoder} cvn
   /uk.co.terryburton.bwipp findresource exec
@@ -72,95 +68,101 @@ _BWIPP_BLOCK = re.compile(
     r"^% --BEGIN (RESOURCE|ENCODER|RENDERER) (\w+)--\n.*?^% --END \1 \2--\n", re.S | re.M
 )
 _BWIPP_REQUIRES = re.compile(r"^% --REQUIRES ([\w ]+)--$", re.M)
+_EPS_BOUNDING_BOX = re.compile(rb"^%%(HiRes)?BoundingBox: .*$", re.M)
 
 
 class RenderError(Exception):
     """Ghostscript or BWIPP failed to produce the barcode."""
 
 
-@dataclass(frozen=True, slots=True)
-class RenderOptions:
-    include_text: bool = True
-    scale: int = 2
-    bar_height_mm: float = 22.85
-    dpi: int = 300
-
-    @property
-    def magnification(self) -> float:
-        """PostScript scale factor so that one module is ``GS1_MODULE_MM * scale``."""
-        return self.scale * GS1_MODULE_MM / _MM_PER_POINT
+def render(symbology: Symbology, code: str, fmt: OutputFormat, options: RenderOptions) -> bytes:
+    """Render an already normalized ``code``. Blocking: call it from a threadpool."""
+    match fmt:
+        case OutputFormat.PNG:
+            return _render_png(symbology, code, options)
+        case OutputFormat.EPS:
+            return _render_eps(symbology, code, options)
 
 
-def render_ean13_eps(code: str, options: RenderOptions) -> bytes:
-    """Vector EPS at exact physical size, text converted to outlines."""
-    magnification = options.magnification
+def _render_eps(symbology: Symbology, code: str, options: RenderOptions) -> bytes:
+    module_points = symbology.module_mm * options.scale / MM_PER_POINT
+    extent = symbology.extent(options, module_points)
+    width = extent.width * module_points
+    height = extent.height * module_points
+    bar_color = options.bar_color.removeprefix("#").upper()
+
     program = _build_program(
-        "ean13",
+        symbology,
         code,
-        _ean13_bwipp_options(options, magnification),
-        magnification=magnification,
-        origin=_EPS_ORIGIN_POINTS,
+        {
+            **symbology.bwipp_options(options, module_points),
+            "barcolor": bar_color,
+            "textcolor": bar_color,
+        },
+        module_points=module_points,
+        origin=(-extent.left * module_points, -extent.bottom * module_points),
+        background=_ps_background(options.background, width, height),
     )
-    return _run_ghostscript(
+    eps = _run_ghostscript(
         "-sDEVICE=eps2write",
-        f"-dDEVICEWIDTHPOINTS={_EPS_PAGE_POINTS}",
-        f"-dDEVICEHEIGHTPOINTS={_EPS_PAGE_POINTS}",
+        f"-dDEVICEWIDTHPOINTS={width:.4f}",
+        f"-dDEVICEHEIGHTPOINTS={height:.4f}",
         "-dNoOutputFonts",
         stdin=program,
     )
+    # eps2write computes the box from the marks; widen it to the whole page so the
+    # quiet zones are part of the file even with a transparent background.
+    return _set_bounding_box(eps, width, height)
 
 
-def render_ean13_png(code: str, options: RenderOptions) -> bytes:
-    """Grayscale PNG at ``options.dpi`` (stored in the ``pHYs`` chunk)."""
+def _render_png(symbology: Symbology, code: str, options: RenderOptions) -> bytes:
     dpi = options.dpi
-    module_px = max(1, round(GS1_MODULE_MM * options.scale / 25.4 * dpi))
-    magnification = module_px * 72 / dpi  # points per module
-    origin = _snap_to_pixel(_EAN13_MARGIN_MODULES * magnification, dpi)
-    bar_height_points = options.bar_height_mm / _MM_PER_POINT
+    module_px = max(1, round(symbology.module_mm * options.scale / 25.4 * dpi))
+    module_points = module_px * 72 / dpi
+    extent = symbology.extent(options, module_points)
+    left_px = math.floor(extent.left * module_px)
+    bottom_px = math.floor(extent.bottom * module_px)
+    width_px = math.ceil(extent.right * module_px) - left_px
+    height_px = math.ceil(extent.top * module_px) - bottom_px
 
     program = _build_program(
-        "ean13",
+        symbology,
         code,
-        {**_ean13_bwipp_options(options, magnification), "inkspread": "0"},
-        magnification=magnification,
-        origin=origin,
+        {**symbology.bwipp_options(options, module_points), "inkspread": "0"},
+        module_points=module_points,
+        origin=(-left_px * 72 / dpi, -bottom_px * 72 / dpi),
+        background="",
     )
     raster = _run_ghostscript(
         "-sDEVICE=pnggray",
-        f"-dDEVICEWIDTHPOINTS={_EAN13_PAGE_WIDTH_MODULES * magnification:.4f}",
-        f"-dDEVICEHEIGHTPOINTS="
-        f"{bar_height_points + _EAN13_PAGE_EXTRA_HEIGHT_MODULES * magnification:.4f}",
         f"-r{dpi}",
+        f"-g{width_px}x{height_px}",
         # Antialias text only: bars stay crisp, which scanners prefer.
         "-dTextAlphaBits=4",
         "-dGraphicsAlphaBits=1",
         stdin=program,
     )
-    return _crop_to_content(raster, dpi)
-
-
-def _ean13_bwipp_options(options: RenderOptions, magnification: float) -> dict[str, str | bool]:
-    # BWIPP's height is in inches and gets multiplied by the magnification,
-    # so divide it out to obtain the requested physical bar height.
-    height_in = options.bar_height_mm / 25.4 / magnification
-    return {"includetext": options.include_text, "height": f"{height_in:.6f}"}
+    return _colorize_png(raster, options)
 
 
 def _build_program(
-    encoder: str,
+    symbology: Symbology,
     data: str,
     bwipp_options: dict[str, str | bool],
     *,
-    magnification: float,
-    origin: float,
+    module_points: float,
+    origin: tuple[float, float],
+    background: str,
 ) -> bytes:
     return _PROGRAM_TEMPLATE.format(
-        bwipp=_load_bwipp(encoder),
-        origin=f"{origin:.6f}",
-        magnification=f"{magnification:.6f}",
+        bwipp=_load_bwipp(symbology.bwipp_name),
+        background=background,
+        origin_x=f"{origin[0]:.6f}",
+        origin_y=f"{origin[1]:.6f}",
+        module_points=f"{module_points:.6f}",
         data=_ps_hex_string(data),
         options=_ps_hex_string(_format_bwipp_options(bwipp_options)),
-        encoder=_ps_hex_string(encoder),
+        encoder=_ps_hex_string(symbology.bwipp_name),
     ).encode("ascii")
 
 
@@ -181,18 +183,46 @@ def _run_ghostscript(*device_args: str, stdin: bytes) -> bytes:
     return result.stdout
 
 
-def _crop_to_content(png: bytes, dpi: int) -> bytes:
-    image = Image.open(io.BytesIO(png))
-    box = ImageOps.invert(image.convert("L")).getbbox()
-    if box is None:
-        raise RenderError("Ghostscript generó una imagen vacía")
+def _ps_background(background: str, width: float, height: float) -> str:
+    if background == TRANSPARENT:
+        return ""
+    r, g, b = (channel / 255 for channel in _hex_to_rgb(background))
+    return f"{r:.4f} {g:.4f} {b:.4f} setrgbcolor 0 0 {width:.4f} {height:.4f} rectfill"
+
+
+def _set_bounding_box(eps: bytes, width: float, height: float) -> bytes:
+    def replace(match: re.Match[bytes]) -> bytes:
+        if match.group(1):
+            return f"%%HiResBoundingBox: 0 0 {width:.4f} {height:.4f}".encode()
+        return f"%%BoundingBox: 0 0 {math.ceil(width)} {math.ceil(height)}".encode()
+
+    header, separator, body = eps.partition(b"%%EndComments")
+    return _EPS_BOUNDING_BOX.sub(replace, header) + separator + body
+
+
+def _colorize_png(raster: bytes, options: RenderOptions) -> bytes:
+    gray = Image.open(io.BytesIO(raster)).convert("L")
+    image: Image.Image
+    if options.bar_color.upper() == "#000000" and options.background.upper() == "#FFFFFF":
+        image = gray  # default: keep the small 8-bit grayscale PNG
+    else:
+        ink = ImageOps.invert(gray)  # 255 where fully inked
+        bars = Image.new("RGB", gray.size, _hex_to_rgb(options.bar_color))
+        if options.background == TRANSPARENT:
+            image = bars.convert("RGBA")
+            image.putalpha(ink)
+        else:
+            paper = Image.new("RGB", gray.size, _hex_to_rgb(options.background))
+            image = Image.composite(bars, paper, ink)
+
     output = io.BytesIO()
-    image.crop(box).save(output, format="PNG", dpi=(dpi, dpi))
+    image.save(output, format="PNG", dpi=(options.dpi, options.dpi))
     return output.getvalue()
 
 
-def _snap_to_pixel(points: float, dpi: int) -> float:
-    return round(points / 72 * dpi) * 72 / dpi
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    value = color.removeprefix("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
 
 
 # BWIPP is passed inline because SAFER mode forbids the PS code from reading files.
