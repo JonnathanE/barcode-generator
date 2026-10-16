@@ -11,7 +11,8 @@ from app.api.routes import barcodes, batch, health
 from app.core.config import get_settings
 from app.core.logging import configure_logging, log_requests
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
-from app.core.uploads import keep_uploads_in_memory, limit_upload_size
+from app.core.security_headers import add_security_headers
+from app.core.uploads import keep_uploads_in_memory, limit_request_size
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -23,10 +24,11 @@ app = FastAPI(
     description="Genera códigos de barras EAN-13 en PNG y EPS vectorial.",
 )
 
-# Registration order = inside out: CORS wraps the size limit, so a 413 still carries
-# CORS headers and the browser can show its message.
+# Registration order = inside out: CORS wraps the size limit and the security headers,
+# so a 413 still carries CORS headers and the browser can show its message.
 app.middleware("http")(log_requests)
-app.middleware("http")(limit_upload_size)
+app.middleware("http")(limit_request_size)
+app.middleware("http")(add_security_headers)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,

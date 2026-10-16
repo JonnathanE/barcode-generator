@@ -1,4 +1,4 @@
-"""Keep uploads in memory and reject oversized ones before parsing (RNF-03, RNF-07)."""
+"""Keep uploads in memory and reject oversized bodies before parsing (RNF-03, RNF-07)."""
 
 from collections.abc import Awaitable, Callable
 
@@ -26,27 +26,43 @@ def keep_uploads_in_memory() -> None:
     MultiPartParser.spool_max_size = max_request_bytes() + 1
 
 
-async def limit_upload_size(
+JSON_MAX_BYTES = 64 * 1024
+"""Every JSON body of the API is a few hundred bytes; without a limit FastAPI would
+read a huge body into memory before validating it (512 MB of RAM on Render)."""
+
+_BODY_METHODS = {"POST", "PUT", "PATCH"}
+
+
+async def limit_request_size(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
     """Reject by Content-Length before the body is read or parsed."""
-    if request.method != "POST" or not request.url.path.startswith(UPLOAD_PATH_PREFIX):
+    if request.method not in _BODY_METHODS:
         return await call_next(request)
 
-    max_mb = get_settings().max_upload_mb
     length = request.headers.get("content-length")
     if length is None or not length.isdigit():
         return JSONResponse(
-            error_body(ErrorCode.INVALID_REQUEST, "Falta el tamaño del archivo (Content-Length)."),
+            error_body(
+                ErrorCode.INVALID_REQUEST, "Falta el tamaño de la solicitud (Content-Length)."
+            ),
             status_code=411,
         )
-    if int(length) > max_request_bytes():
+
+    if request.url.path.startswith(UPLOAD_PATH_PREFIX):
+        if int(length) > max_request_bytes():
+            max_mb = get_settings().max_upload_mb
+            return JSONResponse(
+                error_body(
+                    ErrorCode.FILE_TOO_LARGE,
+                    f"El archivo supera el límite de {max_mb} MB.",
+                    {"max_mb": max_mb},
+                ),
+                status_code=413,
+            )
+    elif int(length) > JSON_MAX_BYTES:
         return JSONResponse(
-            error_body(
-                ErrorCode.FILE_TOO_LARGE,
-                f"El archivo supera el límite de {max_mb} MB.",
-                {"max_mb": max_mb},
-            ),
+            error_body(ErrorCode.INVALID_REQUEST, "La solicitud es demasiado grande."),
             status_code=413,
         )
     return await call_next(request)

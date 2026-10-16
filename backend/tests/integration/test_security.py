@@ -79,3 +79,57 @@ def test_rate_limit_is_per_client_ip(monkeypatch: pytest.MonkeyPatch) -> None:
     assert first.post("/api/v1/barcodes/ean13/validate", json=payload).status_code == 200
     assert first.post("/api/v1/barcodes/ean13/validate", json=payload).status_code == 429
     assert second.post("/api/v1/barcodes/ean13/validate", json=payload).status_code == 200
+
+
+# ---------- Request size (memory) ----------
+
+
+def test_oversized_json_body_is_rejected_before_parsing() -> None:
+    huge = '{"code": "' + "9" * (70 * 1024) + '", "format": "png"}'
+
+    response = client.post(
+        "/api/v1/barcodes/ean13/render",
+        content=huge,
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"] == {
+        "code": "INVALID_REQUEST",
+        "message": "La solicitud es demasiado grande.",
+        "details": {},
+    }
+
+
+def test_normal_json_bodies_are_accepted() -> None:
+    response = client.post("/api/v1/barcodes/ean13/validate", json={"code": "786123456789"})
+
+    assert response.status_code == 200
+
+
+# ---------- Security headers ----------
+
+
+def test_api_responses_carry_security_headers() -> None:
+    response = client.get("/api/v1/symbologies")
+
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert (
+        response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    )
+
+
+def test_error_responses_carry_security_headers_too() -> None:
+    response = client.get("/no-existe")
+
+    assert response.status_code == 404
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_swagger_docs_are_not_blocked_by_the_api_csp() -> None:
+    response = client.get("/docs")
+
+    assert response.status_code == 200
+    assert "content-security-policy" not in response.headers
