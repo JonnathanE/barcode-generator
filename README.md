@@ -214,9 +214,20 @@ render deploys list srv-db8q8drbc2fs73bq40bg          # historial de deploys
 render blueprints validate ./render.yaml              # validar el Blueprint
 ```
 
+### Frontend en Vercel
+
+App pública: https://barcode-generator-vert.vercel.app
+
+- **Proyecto:** importado desde GitHub con *Root Directory* = `frontend`. Vercel detecta Vite y usa el pnpm fijado en `package.json`.
+- **Variable:** `VITE_API_URL=https://barcode-generator-api-yti8.onrender.com` (se incrusta en el build, así que cambiarla requiere redeploy).
+- **CORS:** el dominio de Vercel está en `ALLOWED_ORIGINS` del backend (panel de Render → Environment). Si cambia el dominio, hay que actualizar esa variable.
+- **Deploy automático:** cada push a `main` despliega en Vercel.
+
 ### CI
 
 [`.github/workflows/backend.yml`](.github/workflows/backend.yml) corre en cada cambio de `backend/**`: ruff, mypy, pytest con Ghostscript (falla si la cobertura baja de 75 %) y una prueba de humo de la imagen Docker (`/health` y render PNG/EPS).
+
+[`.github/workflows/frontend.yml`](.github/workflows/frontend.yml) corre en cada cambio de `frontend/**`: oxlint, `tsc`, Prettier, Vitest y build.
 
 ### Mediciones en Render (Fase 3)
 
@@ -230,8 +241,8 @@ Plan gratuito, región `virginia`, medido el 2026-10-16.
 | **Cold start** (`/health` tras 17 min sin tráfico) | **22,5 s** (el contenedor arranca ~12 s después de la petición) |
 | Primer render después del cold start | 1,3 s |
 
-El cold start queda muy por debajo del timeout de 90 s del cliente (RNF-06). El frontend igual mostrará "Iniciando servidor…" mientras tanto (RF-20).
+El cold start queda muy por debajo del timeout de 90 s del cliente (RNF-06). Verificado desde Vercel con el backend dormido: la UI muestra "Comprobando servidor…", a los 2 s "Iniciando servidor (puede tardar hasta 1 minuto)…" y a los ~24 s "Servidor listo", sin recargar ni errores en consola (RF-20).
 
 ## Estado
 
-En construcción: Fases 0 a 3 completas (backend desplegado en Render); sigue la Fase 4 (frontend individual y despliegue en Vercel).
+En construcción: Fases 0 a 4 completas (generación individual desplegada en Vercel + Render); sigue la Fase 5 (backend de generación masiva).
