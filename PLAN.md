@@ -63,8 +63,9 @@ Aplicación web para generar códigos de barras listos para imprenta, inspirada 
 | RF-02 | Se rechazan entradas con caracteres no numéricos, longitud distinta de 12/13 o dígito de control incorrecto, con un mensaje claro que indique el dígito esperado. |
 | RF-03 | Se ignoran espacios y guiones al inicio, final o intermedios (`786-1234-56789` → `786123456789`). |
 | RF-04 | Vista previa PNG que se actualiza al escribir (debounce de 300 ms), solo cuando la entrada es válida. |
-| RF-05 | Opciones configurables: mostrar texto legible (sí/no, por defecto sí), escala (1–5, por defecto 2), altura de barras en mm (10–50, por defecto 22.85 mm) y DPI para PNG (150, 300, 600; por defecto 300). La **escala es magnificación física**: ancho de módulo = 0,33 mm × escala (1 = 100 % GS1, 2 = 200 %) y aplica igual a PNG y EPS; la altura de barras es la altura final real; el DPI solo define la resolución del PNG (y se guarda como metadato `pHYs`). Escalas > 2 quedan fuera del rango GS1 (80 %–200 %) y la UI lo advierte. |
+| RF-05 | Opciones configurables: mostrar texto legible (sí/no, por defecto sí), escala (1–5, por defecto 2), altura de barras en mm (10–50, por defecto 22.85 mm) y DPI para PNG (150, 300, 600; por defecto 300). La **escala es magnificación física**: ancho de módulo = 0,33 mm × escala (1 = 100 % GS1, 2 = 200 %) y aplica igual a PNG y EPS; la altura de barras es la altura final real; el DPI solo define la resolución del PNG (y se guarda como metadato `pHYs`). Escalas > 2 quedan fuera del rango GS1 (80 %–200 %) y la UI lo advierte. **Colores:** `bar_color` (barras y texto, hex `#RRGGBB`, por defecto `#000000`) y `background` (`#FFFFFF` por defecto, `transparent` o cualquier hex `#RRGGBB`); aplican a PNG y EPS. La UI advierte cuando el contraste es insuficiente para lectores (barras claras, rojas/naranjas/amarillas, o fondo oscuro). |
 | RF-06 | Descarga en **PNG** y **EPS vectorial**. Nombre del archivo: `<codigo13>.png` / `<codigo13>.eps`. |
+| RF-06a | Los archivos incluyen **siempre la zona de silencio** de EAN-13 (11 módulos a la izquierda, 7 a la derecha) dentro de su tamaño, pintada con el color de fondo (o transparente). Con texto legible se dibuja el indicador `>` de zona libre (opción `guardwhitespace` de BWIPP). |
 | RF-07 | La validación del dígito de control también se ejecuta en el cliente para retroalimentación instantánea; el backend es la fuente de verdad. |
 
 ### 3.2 Generación masiva
@@ -255,7 +256,7 @@ Códigos de error: `INVALID_CHARACTERS`, `INVALID_LENGTH`, `INVALID_CHECK_DIGIT`
 | GET | `/health` | — | `{"status":"ok","version":"x.y.z"}` |
 | GET | `/api/v1/symbologies` | — | Lista de simbologías y formatos soportados |
 | POST | `/api/v1/barcodes/{symbology}/validate` | `{ "code": "786123456789" }` | `{ "valid": true, "normalized": "7861234567898", "check_digit": 8 }` |
-| POST | `/api/v1/barcodes/{symbology}/render` | `{ "code", "format": "png"\|"eps", "options": { include_text, scale, bar_height_mm, dpi } }` | Archivo binario. `?inline=true` para la vista previa; si no, `Content-Disposition: attachment` |
+| POST | `/api/v1/barcodes/{symbology}/render` | `{ "code", "format": "png"\|"eps", "options": { include_text, scale, bar_height_mm, dpi, bar_color, background } }` | Archivo binario. `?inline=true` para la vista previa; si no, `Content-Disposition: attachment` |
 | GET | `/api/v1/batch/template` | — | `plantilla_codigos.xlsx` |
 | POST | `/api/v1/batch/{symbology}/validate` | multipart: `file`, `restore_leading_zeros` (bool, opcional, por defecto `false`) | `{ "summary": {total, valid, errors, duplicates}, "rows": [{row, input, normalized, status, message, filename}] }` |
 | POST | `/api/v1/batch/{symbology}/generate` | multipart: `file`, `formats` (lista), `options` (JSON), `restore_leading_zeros` (bool, opcional) | `codigos_<fecha>.zip` |
