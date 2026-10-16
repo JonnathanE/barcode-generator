@@ -1,17 +1,43 @@
 # Generador de Códigos de Barras
 
-Aplicación web para generar códigos de barras **EAN-13** listos para imprenta, en **PNG** y **EPS vectorial**, de forma individual o masiva desde Excel. Usa el motor open source [BWIPP](https://bwipp.terryburton.co.uk/) mediante `treepoem` y Ghostscript.
+Aplicación web para generar códigos de barras **EAN-13** listos para imprenta, en **PNG** y **EPS vectorial**, de a uno o en lote desde Excel. Usa el motor open source [BWIPP](https://bwipp.terryburton.co.uk/) (Barcode Writer in Pure PostScript) con Ghostscript.
+
+- **App:** https://barcode-generator-vert.vercel.app
+- **API:** https://barcode-generator-api-yti8.onrender.com (documentación en [`/docs`](https://barcode-generator-api-yti8.onrender.com/docs))
 
 > ⚠️ Generar la imagen no otorga el derecho de usar el número en el comercio. Los códigos EAN-13 deben estar asignados por GS1 (en Ecuador, GS1 Ecuador).
 
-## Estructura
+| Un código, con vista previa | Colores y fondo transparente (tema oscuro) |
+|---|---|
+| ![Generación individual](docs/capturas/individual.png) | ![Colores y fondo transparente](docs/capturas/individual-oscuro.png) |
+| **Lote desde Excel: validación por fila** | **Móvil** |
+| ![Validación de un lote](docs/capturas/masivo.png) | <img src="docs/capturas/movil.png" alt="Vista en móvil" width="260"> |
+
+## Funcionalidades
+
+- **Un código:** 12 dígitos (calcula el dígito de control) o 13 (lo verifica), con espacios y guiones ignorados y validación instantánea en el navegador. Vista previa en vivo y descarga en PNG o EPS vectorial.
+- **Opciones:** texto legible, escala física (módulo de 0,33 mm × escala; 1 = 100 % GS1), altura real de barras en mm, DPI del PNG, color de barras y fondo (color o transparente) con advertencia de contraste para lectores.
+- **Zona de silencio incluida** siempre (11 módulos a la izquierda y 7 a la derecha), para que el código se pueda escanear aunque se coloque al ras de otros elementos.
+- **Lote desde Excel:** plantilla descargable, validación previa fila por fila (errores, duplicados, notación científica, ceros iniciales perdidos), y un ZIP con `png/`, `eps/` y `reporte.csv`.
+- **EPS vectorial real:** trazos, sin imágenes embebidas, con el texto convertido a contornos (no depende de fuentes instaladas).
+- **Pensado para el plan gratuito:** estado del servidor con *warm-up* (Render se duerme), todo en memoria (sin escribir a disco), límites de tamaño y de solicitudes.
+
+## Stack
+
+| Capa | Tecnología |
+|---|---|
+| Backend | Python 3.12, FastAPI, Pydantic v2, BWIPP (`barcode.ps` de `treepoem`) + Ghostscript, `openpyxl`, `slowapi` |
+| Frontend | React 19 + Vite + TypeScript, shadcn/ui (Radix) + Tailwind v4, `react-hook-form` + `zod/mini`, TanStack Query |
+| Tipos compartidos | `openapi-typescript` + `openapi-fetch` generados desde el OpenAPI del backend (`pnpm gen:api`) |
+| Calidad | ruff, `mypy --strict`, pytest · oxlint, `tsc`, Prettier, Vitest |
+| Despliegue | Render (backend, Docker, plan gratuito) · Vercel (frontend) · GitHub Actions |
 
 ```
-backend/    API FastAPI (Python 3.12, uv)
-frontend/   React + Vite + TypeScript (shadcn/ui)
+backend/    API FastAPI (uv)
+frontend/   React + Vite (pnpm)
+docs/       capturas
+PLAN.md     requerimientos, arquitectura y fases
 ```
-
-El plan completo (requerimientos, arquitectura y fases) está en [`PLAN.md`](PLAN.md).
 
 ## Desarrollo local
 
@@ -129,7 +155,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy app
 
 # Frontend
 cd frontend
-pnpm lint && pnpm typecheck && pnpm format:check && pnpm build   # lint con oxlint
+pnpm lint && pnpm typecheck && pnpm format:check && pnpm test && pnpm build   # lint con oxlint
 ```
 
 Los tests de generación necesitan Ghostscript; si no está instalado se omiten (aparecen como `skipped`).
@@ -149,60 +175,22 @@ Los `.xlsx` de prueba del modo masivo están en `backend/tests/fixtures/` (váli
 | `429 RATE_LIMITED` mientras pruebas | Sube `RATE_LIMIT_SINGLE` en `backend/.env` y `docker compose restart backend` |
 | El frontend no reacciona a cambios en WSL | Mantén el proyecto dentro del sistema de archivos de Linux (`~/...`), no en `/mnt/c/...` |
 
-## Generación de PNG y EPS
+## Cómo funciona la generación
 
-El renderer (`backend/app/services/renderer.py`) usa la **Opción A** de `PLAN.md` §5.3: BWIPP en PostScript convertido con Ghostscript, todo en memoria (stdin/stdout, `-dSAFER` y timeout).
+El renderer ([`backend/app/services/renderer.py`](backend/app/services/renderer.py)) usa BWIPP en PostScript convertido con Ghostscript, siempre en memoria: entrada por stdin, salida por stdout, `-dSAFER` y timeout. Los datos del usuario viajan codificados en hexadecimal, así no pueden alterar el programa PostScript.
 
-- **EPS vectorial:** `gs -sDEVICE=eps2write` aplana el programa BWIPP en trazos. El texto se convierte a contornos (`-dNoOutputFonts`), así el archivo no depende de que la imprenta tenga Helvetica. El tamaño físico es exacto: módulo = 0,33 mm × escala.
-- **PNG:** se rasteriza directamente el programa BWIPP (`pnggray`) y se recorta con Pillow. El ancho de módulo se ajusta a píxeles enteros y se desactiva el `inkspread` de BWIPP, porque con módulos fraccionarios (p. ej., 1,95 px a 150 DPI) las barras salían irregulares y el código no se leía. Desviación máxima del tamaño físico: ~3 %.
-- **Subconjunto de BWIPP:** solo se envían a Ghostscript los recursos que necesita la simbología, resueltos con los metadatos `--REQUIRES` (para EAN-13: ~56 KB en vez de 1 MB). Interpretar la biblioteca completa costaba ~10 s por llamada con 0,1 CPU.
+- **Subconjunto de BWIPP:** solo se envían los recursos que necesita la simbología, resueltos con los metadatos `--REQUIRES` (EAN-13: ~56 KB en vez de 1 MB). Interpretar la biblioteca completa costaba ~10 s por llamada con 0,1 CPU.
+- **Geometría exacta:** cada simbología declara su extensión en módulos, zona de silencio incluida, y la página de Ghostscript mide exactamente eso. El fondo cubre la zona de silencio y el EPS sale con `%%BoundingBox: 0 0 ancho alto`.
+- **EPS:** `ps2write` con `-dNoOutputFonts` (texto en contornos). Como `eps2write` no admite varias páginas por stdout, el documento se separa en un EPS por página con el prolog de `eps2write` (sus dos banderas). Verificado con Ghostscript 10.02, 10.05 y 10.06. Tamaño físico exacto.
+- **PNG:** `pnggray` con el módulo ajustado a píxeles enteros e `inkspread` desactivado (con módulos fraccionarios, p. ej. 1,95 px a 150 DPI, las barras salían irregulares y el código no se leía). Con colores personalizados se colorea con Pillow usando la tinta como máscara, así el texto suavizado queda bien sobre cualquier fondo, transparente incluido.
+- **Muchos códigos por proceso:** arrancar Ghostscript y cargar BWIPP cuesta ~0,9 s con 0,1 CPU y dibujar un código ~0,1 s, así que `render_many()` genera bloques de 100 códigos por proceso. Un lote de 500 bajó de ~17 minutos a ~36 s en Render.
+- **ZIP en memoria:** PNG sin recomprimir (ya están comprimidos) y EPS con deflate nivel 1 (4 veces más rápido, ~20 % más grande). `reporte.csv` con BOM UTF-8 (Excel muestra bien las tildes) y protegido contra inyección de fórmulas.
 
 > ¿Por qué no `treepoem.generate_barcode`? Llama a Ghostscript sin timeout, su `scale` es resolución (no tamaño físico) y devuelve una imagen de Pillow: guardarla como EPS embebe un bitmap. Del paquete solo se usa el `barcode.ps`.
 
-### Mediciones (Fase 1)
+### Excel
 
-`uv run python -m scripts.spike_render` genera `7861234567898.png` y `.eps` en `backend/scripts/out/` y mide los tiempos (mediana de 5). Medido en la imagen de producción (`--target runtime`), limitando la CPU con `docker run --cpus`:
-
-| CPU | PNG (8,8 KB) | EPS (171 KB) |
-|---|---|---|
-| 1 CPU | 0,09 s | 0,08 s |
-| 0,1 CPU (como Render free) | 1,11 s | 1,00 s |
-| 0,1 CPU vía API (Fase 2) | ~1,1 s (escala 5 a 600 DPI: ~2 s) | ~1,0 s |
-
-Opciones por defecto: escala 2, 300 DPI, con texto. El piso de cada llamada es el arranque de Ghostscript (~0,4 s con 0,1 CPU). El EPS pesa 171 KB porque `eps2write` siempre incluye su prolog genérico (~165 KB); el dibujo en sí ocupa ~9 KB, y comprimido en ZIP el archivo baja a ~46 KB.
-
-### Generación masiva y mediciones (Fase 5)
-
-Arrancar Ghostscript y cargar BWIPP cuesta ~0,9 s por llamada con 0,1 CPU, y dibujar un código ~0,1 s. Por eso `render_many()` genera **muchos códigos por proceso** (bloques de 100):
-
-- **PNG:** Ghostscript escribe una página por código; los PNG se separan leyendo sus *chunks*. Con colores por defecto se devuelven tal cual (ya traen el DPI); con colores se colorean con Pillow.
-- **EPS:** `eps2write` no admite varias páginas por stdout, así que se usa `ps2write` y cada página se convierte en un EPS independiente con el mismo prolog y las banderas de `eps2write` (`/SetPageSize false`, `/EPS2Write true`). Verificado con Ghostscript 10.02, 10.05 y 10.06.
-- **ZIP en memoria:** PNG sin recomprimir (ya están comprimidos) y EPS con deflate nivel 1 (4 veces más rápido que el nivel por defecto, ~20 % más grande).
-- **Límite por tamaño de PNG:** un presupuesto de 1000 megapíxeles por lote baja el máximo de filas solo con PNG muy grandes (escala 5 a 600 DPI → 241 filas). `POST /api/v1/batch/{symbology}/limits` lo informa a la UI.
-
-Medido en Render (plan gratuito), PNG + EPS, tiempos vistos desde el cliente (incluye subir el Excel y descargar el ZIP):
-
-| Lote | Opciones | Tiempo | ZIP |
-|---|---|---|---|
-| Validar 500 filas | — | 0,6 s | — |
-| 50 filas | escala 1, 300 DPI | 4,8 s | 3 MB |
-| 200 filas | escala 1, 300 DPI | 14,9 s | 12 MB |
-| 500 filas | escala 1, 300 DPI | 36,2 s | 30 MB |
-| 241 filas (máximo permitido) | escala 5, 600 DPI | 99,5 s | 22 MB |
-
-Todos los casos quedan dentro del timeout de 180 s del cliente (RNF-06), así que `MAX_BATCH_ROWS=500` se mantiene. Memoria pico medida en local con `--cpus=0.1 -m 512m`: 175 MB para 500 filas. Antes de procesar por bloques, 500 filas tardaban ~17 minutos.
-
-Los archivos subidos nunca tocan el disco: se rechazan por `Content-Length` antes de leerlos (413) y Starlette los mantiene en memoria (por defecto pasa a disco los de más de 1 MB). Un test con un *audit hook* de Python verifica que leer, validar y generar no abre ningún archivo para escritura.
-
-### Frontend del modo masivo (Fase 6)
-
-La pestaña **«Masivo desde Excel»** se carga bajo demanda (`React.lazy`) y guía en tres pasos:
-
-1. **Plantilla:** descarga `plantilla_codigos.xlsx`.
-2. **Subir y validar:** arrastrar y soltar o elegir el archivo (un `<label>` con un `<input type="file">` enfocable, así funciona con teclado). El navegador revisa extensión y tamaño; el backend valida el contenido. Se valida al elegir el archivo y de nuevo al cambiar «Restaurar ceros iniciales» o la simbología. Resumen, aviso con cómo corregir los errores y tabla con filtros (Todos / Válidos / Con error / Duplicados) y páginas de 50 filas; en pantallas chicas cada fila es una tarjeta con su estado y mensaje.
-3. **Generar:** formatos, opciones y el máximo de filas para esas opciones (`/limits`). El botón se deshabilita indicando el motivo (sin filas válidas, sin formato, límite excedido). Progreso indeterminado con «Generando N códigos…» y descarga del ZIP.
-
-Verificado desde Vercel con todos los fixtures de `backend/tests/fixtures/`: cada uno muestra el resumen o el error esperado (columna faltante, archivo que no es Excel, macros, límite de solicitudes), y el ZIP generado se decodifica.
+El lector ([`excel_reader.py`](backend/app/services/excel_reader.py)) revisa, **antes de abrir el archivo**: tamaño, firma ZIP con `xl/workbook.xml` (rechaza `.xls`, `.docx` o textos renombrados), macros y bombas ZIP (máximo 100 MB descomprimido). Luego lee la primera hoja con `openpyxl` en modo `read_only`, detecta las columnas por encabezado (sin distinguir mayúsculas ni tildes) y normaliza lo que Excel hace con los números: enteros, flotantes, notación científica con dígitos perdidos y ceros iniciales (opción «Restaurar ceros iniciales»).
 
 ## API
 
@@ -224,7 +212,7 @@ Opciones de `render` (todas opcionales):
 | Opción | Valores | Por defecto |
 |---|---|---|
 | `include_text` | `true` / `false` | `true` |
-| `scale` | 1–5 (módulo = 0,33 mm × escala; GS1 admite hasta 2) | `2` |
+| `scale` | 1–5 (módulo = 0,33 mm × escala; GS1 admite hasta 2) | `2` (la UI usa 1) |
 | `bar_height_mm` | 10–50 (altura final real) | `22.85` |
 | `dpi` | 150, 300, 600 (solo PNG) | `300` |
 | `bar_color` | `#RRGGBB` (barras y texto) | `#000000` |
@@ -236,11 +224,9 @@ Los archivos incluyen siempre la zona de silencio de EAN-13 (11 módulos a la iz
 
 ### Backend en Render
 
-API pública: https://barcode-generator-api-yti8.onrender.com (`/health`, `/docs`).
+El servicio se define en [`render.yaml`](render.yaml) (Blueprint): web service Docker gratuito en `virginia`, construido desde `backend/` (stage `runtime` del Dockerfile, usuario sin privilegios), con health check en `/health`.
 
-El servicio se define en [`render.yaml`](render.yaml) (Blueprint): web service Docker gratuito en `virginia`, construido desde `backend/` (stage `runtime` del Dockerfile), con health check en `/health`.
-
-- **Deploy automático:** cada push a `main` que cambie `backend/**` se despliega **solo si pasa el CI** (`autoDeployTrigger: checksPass`).
+- **Deploy automático:** cada push a `main` que cambie `backend/**` se despliega **solo si pasa el CI** (`autoDeployTrigger: checksPass`). Si se hacen varios push seguidos y el último no toca `backend/`, Render puede saltear el deploy: en ese caso, `render deploys create srv-db8q8drbc2fs73bq40bg --wait`.
 - **Variables:** las de `render.yaml`, más `ALLOWED_ORIGINS`, que se define en el panel de Render (Environment) y nunca en el repo.
 - **IP real del cliente:** uvicorn corre con `--proxy-headers`, así el rate limit usa la IP de `X-Forwarded-For` y no la del proxy de Render.
 
@@ -255,33 +241,136 @@ render blueprints validate ./render.yaml              # validar el Blueprint
 
 ### Frontend en Vercel
 
-App pública: https://barcode-generator-vert.vercel.app
-
 - **Proyecto:** importado desde GitHub con *Root Directory* = `frontend`. Vercel detecta Vite y usa el pnpm fijado en `package.json`.
-- **Variable:** `VITE_API_URL=https://barcode-generator-api-yti8.onrender.com` (se incrusta en el build, así que cambiarla requiere redeploy).
-- **CORS:** el dominio de Vercel está en `ALLOWED_ORIGINS` del backend (panel de Render → Environment). Si cambia el dominio, hay que actualizar esa variable.
-- **Deploy automático:** cada push a `main` despliega en Vercel.
+- **Variable:** `VITE_API_URL=https://barcode-generator-api-yti8.onrender.com` (se incrusta en el build: cambiarla requiere redeploy).
+- **Cabeceras:** [`frontend/vercel.json`](frontend/vercel.json) define la CSP (su `connect-src` incluye la URL de la API: actualízala si cambia), `nosniff`, políticas de referrer y permisos, y caché inmutable para `/assets/*`.
+- **CORS:** el dominio de Vercel está en `ALLOWED_ORIGINS` del backend; si cambia, hay que actualizar esa variable.
 
-### CI
+### CI y dependencias
 
-[`.github/workflows/backend.yml`](.github/workflows/backend.yml) corre en cada cambio de `backend/**`: ruff, mypy, pytest con Ghostscript (falla si la cobertura baja de 75 %) y una prueba de humo de la imagen Docker (`/health` y render PNG/EPS).
+- [`backend.yml`](.github/workflows/backend.yml) (cambios en `backend/**`): ruff, `mypy --strict`, pytest con Ghostscript, **cobertura global ≥ 75 % y del dominio ≥ 90 %** (RNF-15; el job falla si baja), `pip-audit` y una prueba de humo de la imagen Docker (`/health` y render PNG/EPS).
+- [`frontend.yml`](.github/workflows/frontend.yml) (cambios en `frontend/**`): `pnpm audit --prod`, oxlint, `tsc` (app y tests por separado), Prettier, Vitest y build.
+- [Dependabot](.github/dependabot.yml) propone actualizaciones semanales de uv, npm, la imagen Docker (solo dentro de Python 3.12: trae los parches de Debian y Ghostscript) y las GitHub Actions.
 
-[`.github/workflows/frontend.yml`](.github/workflows/frontend.yml) corre en cada cambio de `frontend/**`: oxlint, `tsc`, Prettier, Vitest y build.
+## Límites del plan gratuito
 
-### Mediciones en Render (Fase 3)
+| Límite (Render free) | Qué hace la app |
+|---|---|
+| Se duerme tras 15 min sin tráfico; el cold start medido es de **22,5 s** | Al cargar, el frontend llama a `/health` (timeout de 90 s) y muestra «Iniciando servidor…»; los botones se habilitan cuando responde |
+| 0,1 CPU | Subconjunto de BWIPP, varios códigos por proceso de Ghostscript y generación en threadpool |
+| 512 MB de RAM | Excel ≤ 2 MB, cuerpos JSON ≤ 64 KB, máximo 500 filas y presupuesto de píxeles para PNG grandes (escala 5 a 600 DPI → 241 filas). Pico medido: 175 MB con 500 filas |
+| Disco efímero | Nada se escribe en disco: los archivos subidos se mantienen en memoria y un test lo verifica |
+| Servicio público sin autenticación | CORS solo para el dominio de Vercel y rate limit por IP (60/min individual, 5/min lote) |
 
-Plan gratuito, región `virginia`, medido el 2026-10-16.
+## Mediciones
+
+Medido el 2026-10-16 en Render (plan gratuito, `virginia`) y Vercel.
 
 | Medición | Resultado |
 |---|---|
-| Render en el servidor (`duration_ms` de los logs, 23 muestras) | mediana **0,74 s** (mín. 0,67 s, máx. 1,48 s con escala 5 a 600 DPI) |
-| Render visto desde el cliente (Ecuador, servidor despierto) | PNG ~1,1 s · EPS ~1,25 s (incluye ~0,35 s de red) |
-| `/health` con el servidor despierto | ~0,4 s |
-| **Cold start** (`/health` tras 17 min sin tráfico) | **22,5 s** (el contenedor arranca ~12 s después de la petición) |
-| Primer render después del cold start | 1,3 s |
+| Generar un código (servidor, 23 muestras) | mediana **0,74 s** (máx. 1,48 s con escala 5 a 600 DPI) |
+| Generar un código visto desde el cliente (Ecuador) | PNG ~1,1 s · EPS ~1,25 s |
+| Cold start (`/health` tras 17 min sin tráfico) | **22,5 s**; la UI pasa a «Servidor listo» sola, sin recargar |
+| Validar 500 filas | 0,6 s |
+| Lote de 50 / 200 / 500 filas, PNG + EPS (escala 1) | 4,8 s / 14,9 s / **36,2 s** (ZIP de 3 / 12 / 30 MB) |
+| Lote máximo con PNG grandes (241 filas, escala 5, 600 DPI) | 99,5 s |
+| Lighthouse (móvil) en Vercel | **Performance 90–93 · Accesibilidad 100 · Buenas prácticas 100 · SEO 100** |
 
-El cold start queda muy por debajo del timeout de 90 s del cliente (RNF-06). Verificado desde Vercel con el backend dormido: la UI muestra "Comprobando servidor…", a los 2 s "Iniciando servidor (puede tardar hasta 1 minuto)…" y a los ~24 s "Servidor listo", sin recargar ni errores en consola (RF-20).
+Todos los lotes quedan dentro del timeout de 180 s del cliente. En Performance, el arreglo con más impacto fue el **layout shift**: el encabezado cambiaba de alto al cargar la fuente web (CLS 0,33 → 0). Le siguió el bundle más chico: `zod/mini` y el modo masivo cargado bajo demanda.
+
+## Seguridad
+
+- **CORS** solo para `ALLOWED_ORIGINS` (la app no arranca con `*` en producción) y **rate limit** por IP real.
+- **Entradas:** tamaño de cada cuerpo limitado por `Content-Length` antes de leerlo; el Excel se valida por contenido (sin macros, sin bombas ZIP); nombres de archivo del ZIP sin `/`, `\`, `..` ni nombres reservados de Windows; CSV protegido contra inyección de fórmulas.
+- **Ghostscript** con `-dSAFER`, sin archivos y con timeout; los datos del usuario van codificados en hexadecimal.
+- **Errores** siempre con el formato `{"error": {...}}`, sin trazas internas. **Logs** JSON con conteos y tiempos, nunca códigos ni contenido de archivos (hay tests que lo comprueban).
+- **Cabeceras:** la API envía `nosniff`, `no-referrer`, `X-Frame-Options` y una CSP que lo bloquea todo; el frontend, una CSP que solo permite scripts propios y conexiones a la API.
+- **Dependencias:** `pip-audit` y `pnpm audit --prod` en el CI. Riesgo aceptado: `braces` (dependencia de la CLI de shadcn, solo en desarrollo) tiene una vulnerabilidad de denegación de servicio sin versión corregida, que solo aplica a patrones *glob* controlados por un atacante; no llega al navegador.
+
+## Cómo agregar una simbología nueva
+
+La arquitectura está pensada para que una simbología nueva (EAN-8, UPC-A, Code 128, QR…) no requiera cambiar endpoints ni pantallas (RNF-19). Por ejemplo, para EAN-8:
+
+1. **Dominio** (si tiene reglas propias): `backend/app/domain/ean8.py` con su limpieza y dígito de control, y sus tests en `tests/unit/`.
+2. **Clase de la simbología:** `backend/app/symbologies/ean8.py` que cumpla el protocolo `Symbology` de [`base.py`](backend/app/symbologies/base.py):
+   - `id` (en la URL, p. ej. `"ean8"`), `name` (en la UI), `bwipp_name` (el codificador de BWIPP) y `module_mm`.
+   - `supported_formats`: PNG y/o EPS.
+   - `normalize(raw)`: valida y devuelve el código o lanza `AppError`.
+   - `bwipp_options(options, module_points)`: opciones de BWIPP (texto, altura).
+   - `extent(options, module_points)`: área en módulos incluida la zona de silencio. Mídela una vez con `eps2write` (ver [`ean13.py`](backend/app/symbologies/ean13.py)).
+3. **Registro:** una línea en [`registry.py`](backend/app/symbologies/registry.py): `registry.register(Ean8())`. El renderer, la API, el modo masivo y `/api/v1/symbologies` ya la incluyen.
+4. **Tests:** decodificar los PNG con `zxing-cpp` y verificar que el EPS sea vectorial (copiar los de `tests/integration/test_renderer.py`).
+5. **Frontend:** el selector lee `/api/v1/symbologies`, así que la nueva opción aparece sola. Opcionalmente, agrega un validador instantáneo en [`frontend/src/lib/code-validators.ts`](frontend/src/lib/code-validators.ts) (sin él, valida el backend) y regenera los tipos con `pnpm gen:api`.
+
+## Verificación de requisitos
+
+Todos los requisitos de [`PLAN.md`](PLAN.md) quedaron verificados con tests automáticos, en producción o ambos.
+
+<details>
+<summary>Requisitos funcionales (RF-01 a RF-23)</summary>
+
+| RF | Requisito | Verificación |
+|---|---|---|
+| RF-01 | 12 dígitos calculan el dígito de control; 13 lo verifican | `test_ean13_domain.py`, `ean13.test.ts`; producción |
+| RF-02 | Rechazo de caracteres, longitud y dígito de control, con el dígito esperado | Tests de dominio y de la API (`INVALID_CHECK_DIGIT` con `expected`) |
+| RF-03 | Espacios y guiones ignorados | Tests de dominio en backend y frontend |
+| RF-04 | Vista previa PNG con debounce de 300 ms, solo con entrada válida | `SingleBarcodeForm.test.tsx` (una sola petición tras escribir) |
+| RF-05 | Texto, escala, altura en mm, DPI y colores | Tests del renderer (tamaño físico, DPI, colores) y del formulario |
+| RF-06 / 06a | PNG y EPS vectorial `<codigo13>.ext`; zona de silencio | Tests de la API (`Content-Disposition`) y del renderer (márgenes en blanco) |
+| RF-07 | Validación también en el cliente | `ean13.test.ts`, formulario sin llamadas a la API ante errores |
+| RF-08 | Plantilla `.xlsx` con columna en formato Texto | `test_template_*`; descarga desde la UI |
+| RF-09 | Subida por arrastrar o selector; primera hoja | `BatchPage.test.tsx`; prueba en producción |
+| RF-10 | Columnas por encabezado, sin mayúsculas ni tildes | Fixture `encabezado_con_titulo.xlsx` |
+| RF-11 | Números, flotantes, notación científica y ceros iniciales | Fixtures `numericos.xlsx` y `cientifica.xlsx` |
+| RF-12 | Validación por fila sin generar imágenes | `test_batch_api.py`; validar 500 filas en 0,6 s |
+| RF-13 | Tabla con filtros y resumen | `BatchPage.test.tsx`; capturas |
+| RF-14 | Formatos, opciones y ZIP solo con filas válidas | Tests de `build_zip` y de la API; descarga real desde Vercel |
+| RF-15 | `png/`, `eps/` y `reporte.csv` | `test_batch_zip.py` |
+| RF-16 | Nombres de archivo saneados y colisiones `_2`, `_3` | `test_filenames.py`; fixture `nombres_peligrosos.xlsx` |
+| RF-17 | Duplicados generados una vez y marcados | Fixture `duplicados.xlsx` |
+| RF-18 | Filas vacías ignoradas | Fixture `filas_vacias.xlsx` |
+| RF-19 | Rechazo por filas o tamaño, con el límite | Tests de límites (filas, MB, presupuesto de píxeles) |
+| RF-20 | Estado del servidor con warm-up | `ServerStatus.test.tsx`; cold start real desde Vercel |
+| RF-21 | Aviso de GS1 visible | Siempre visible en la página |
+| RF-22 | Interfaz en español | — |
+| RF-23 | Selector de simbología | Lee `/api/v1/symbologies` |
+
+</details>
+
+<details>
+<summary>Requisitos no funcionales (RNF-01 a RNF-26)</summary>
+
+| RNF | Requisito | Verificación |
+|---|---|---|
+| RNF-01 | Generación individual < 2 s | Mediana de 0,74 s en Render |
+| RNF-02 | Lote de 500 filas medido en Render | 36,2 s (PNG + EPS) |
+| RNF-03 | Tamaño máximo validado antes de parsear | `Content-Length` en middleware; tests 413 |
+| RNF-04 | Generación en threadpool | `run_in_threadpool` en los endpoints |
+| RNF-05 | `openpyxl` en `read_only` y `data_only` | `excel_reader.py` |
+| RNF-06 | Timeouts de 90 s y 180 s en el cliente | `client.test.ts`, `client.batch.test.ts` |
+| RNF-07 | Sin escritura a disco | Test con *audit hook* (incluida una subida de casi 2 MB) |
+| RNF-08 | Flujo masivo stateless | El paso 2 recibe de nuevo el archivo |
+| RNF-09 | CORS restringido, nunca `*` en producción | `test_security.py`; producción |
+| RNF-10 | Rate limit por IP | `test_security.py`; 429 real con la IP del cliente en Render |
+| RNF-11 | Validación por contenido, sin macros | Fixtures `no_es_excel`, `zip_no_excel`, `con_macros` |
+| RNF-12 | Nombres saneados | `test_filenames.py`, `test_batch_zip.py` |
+| RNF-13 | Sin datos del usuario en logs | `test_logging.py`, `test_batch_api.py` |
+| RNF-14 | Errores sin trazas | Tests de `RENDER_FAILED` e `INTERNAL_ERROR` |
+| RNF-15 | Cobertura dominio ≥ 90 %, global ≥ 75 % | 100 % y 99 %; el CI falla si baja |
+| RNF-16 | PNG decodificables con `zxing-cpp` | Tests del renderer y de cada PNG del ZIP |
+| RNF-17 | EPS con cabecera, `BoundingBox` y sin raster | Tests de operadores de página; abierto en Affinity |
+| RNF-18 | ruff, `mypy --strict`, oxlint, `tsc`, Prettier | CI |
+| RNF-19 | Simbología nueva = una clase registrada | Ver «Cómo agregar una simbología nueva» |
+| RNF-20 | Configuración por variables de entorno | `pydantic-settings`; nada sensible en el repo |
+| RNF-21 | Responsive desde 360 px | Sin desbordamiento horizontal a 360 px (Playwright) |
+| RNF-22 | Accesibilidad | Lighthouse 100; teclado y regiones `aria-live` verificados |
+| RNF-23 | Tema claro/oscuro | `ThemeToggle.test.tsx` |
+| RNF-24 | Logs JSON estructurados | `test_logging.py` |
+| RNF-25 | `/health` liviano | Health check de Render y warm-up del frontend |
+| RNF-26 | Deploy automático | Render tras el CI; Vercel en cada push |
+
+</details>
 
 ## Estado
 
-En construcción: Fases 0 a 6 completas (generación individual y masiva en producción); sigue la Fase 7 (endurecimiento y documentación).
+**v1.0.0**: Fases 0 a 7 de [`PLAN.md`](PLAN.md) completas. Lo siguiente (Fase 8, solo con aprobación): más simbologías (EAN-8, UPC-A, Code 128, QR, ITF-14, DataMatrix), formatos SVG y PDF, y hojas de etiquetas para imprimir.

@@ -408,11 +408,13 @@ VITE_API_URL=http://localhost:8000
 
 ## 7. Checklist de verificación final
 
-- [ ] RF-01 a RF-23 implementados y probados
-- [ ] RNF-01 a RNF-26 cumplidos
-- [ ] PNG decodificables con `zxing-cpp`; EPS vectoriales verificados en Inkscape/Illustrator
-- [ ] Sin escrituras a disco en runtime
-- [ ] CORS restringido y rate limiting activo en producción
-- [ ] Warm-up y estado del servidor funcionando con el backend dormido
-- [ ] Límites medidos en Render y documentados
-- [ ] CI en verde; deploy automático en Vercel y Render
+- [x] RF-01 a RF-23 implementados y probados
+- [x] RNF-01 a RNF-26 cumplidos
+- [x] PNG decodificables con `zxing-cpp`; EPS vectoriales verificados (abiertos en Affinity)
+- [x] Sin escrituras a disco en runtime
+- [x] CORS restringido y rate limiting activo en producción
+- [x] Warm-up y estado del servidor funcionando con el backend dormido
+- [x] Límites medidos en Render y documentados
+- [x] CI en verde; deploy automático en Vercel y Render
+
+Detalle de la verificación de cada requisito: sección «Verificación de requisitos» del README.
