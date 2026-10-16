@@ -107,15 +107,28 @@ describe('BatchPage', () => {
       'ean13',
       expect.objectContaining({ restoreLeadingZeros: false }),
     )
-    const errorRow = screen.getByText('El dígito de control debe ser 8.').closest('tr')
+    const table = screen.getByRole('table')
+    const errorRow = within(table).getByText('El dígito de control debe ser 8.').closest('tr')
     expect(errorRow).toHaveClass('bg-destructive/5')
     expect(within(errorRow as HTMLElement).getByText('Con error')).toBeInTheDocument()
+  })
+
+  it('on small screens each row is a card with its status and message', async () => {
+    const user = setup()
+
+    await uploadFile(user)
+
+    const cards = within(await screen.findByRole('list', { name: 'Filas del archivo' }))
+    const errorCard = cards.getByText('El dígito de control debe ser 8.').closest('li')
+    expect(errorCard).toHaveClass('bg-destructive/5')
+    expect(within(errorCard as HTMLElement).getByText('Fila 3')).toBeInTheDocument()
+    expect(within(errorCard as HTMLElement).getByText('Con error')).toBeInTheDocument()
   })
 
   it('filters the table by status', async () => {
     const user = setup()
     await uploadFile(user)
-    await screen.findByText('El dígito de control debe ser 8.')
+    await screen.findByText('1 fila tiene errores y no se generará')
 
     await user.click(screen.getByRole('button', { name: 'Con error (1)' }))
 
@@ -126,7 +139,7 @@ describe('BatchPage', () => {
     expect(
       screen.queryByText('Repetido de la fila 2: se genera una sola vez.'),
     ).not.toBeInTheDocument()
-    expect(screen.getAllByRole('row')).toHaveLength(2) // header + 1
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(2) // header + 1
   })
 
   it('generates the ZIP with the chosen formats and options', async () => {

@@ -67,7 +67,44 @@ export function BatchResultsTable({ rows }: { rows: BatchRow[] }) {
         ))}
       </fieldset>
 
-      <div className="rounded-lg border">
+      {/* Small screens: one card per row so status and message are always visible. */}
+      <ul className="flex flex-col gap-2 sm:hidden" aria-label="Filas del archivo">
+        {pageRows.length === 0 ? (
+          <li className="text-muted-foreground rounded-lg border p-3 text-center text-sm">
+            No hay filas con este filtro.
+          </li>
+        ) : (
+          pageRows.map((row) => (
+            <li
+              key={row.row}
+              className={cn(
+                'flex flex-col gap-1 rounded-lg border p-3 text-sm',
+                ROW_TINT[row.status],
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">Fila {row.row}</span>
+                <StatusLabel status={row.status} />
+              </div>
+              <span className="font-mono break-all">{row.normalized ?? (row.input || '—')}</span>
+              {row.message && (
+                <span
+                  className={row.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}
+                >
+                  {row.message}
+                </span>
+              )}
+              {row.filename && (
+                <span className="text-muted-foreground font-mono break-all">
+                  Archivo: {row.filename}
+                </span>
+              )}
+            </li>
+          ))
+        )}
+      </ul>
+
+      <div className="hidden rounded-lg border sm:block">
         <Table>
           <TableHeader>
             <TableRow>
