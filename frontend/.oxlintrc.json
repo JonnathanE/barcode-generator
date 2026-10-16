@@ -34,7 +34,9 @@
     {
       "files": ["src/components/ui/**"],
       "rules": {
-        "react/only-export-components": "off"
+        "react/only-export-components": "off",
+        "jsx-a11y/prefer-tag-over-role": "off",
+        "react/no-array-index-key": "off"
       }
     }
   ],
