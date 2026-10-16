@@ -20,6 +20,7 @@ Aplicación web para generar códigos de barras listos para imprenta, inspirada 
 | Backend | Python 3.12, FastAPI, Pydantic v2, `treepoem` (BWIPP) + Ghostscript, `openpyxl` |
 | Tooling backend | `uv` (dependencias), `ruff` (lint/format), `mypy`, `pytest` |
 | Frontend | React + Vite + TypeScript, shadcn/ui, Tailwind, `react-hook-form` + `zod`, TanStack Query |
+| Tooling frontend | `pnpm` (dependencias), `oxlint` (lint), Prettier (formato), `tsc` (tipos), Vitest (tests) |
 | Tipos compartidos | `openapi-typescript` generado desde `/openapi.json` de FastAPI |
 | Repositorio | Monorepo simple (`backend/`, `frontend/`), sin Nx/Turborepo |
 | Despliegue | Frontend en **Vercel** (free) · Backend en **Render** (free, Docker) |
@@ -130,7 +131,7 @@ Aplicación web para generar códigos de barras listos para imprenta, inspirada 
 | RNF-15 | Cobertura ≥ 90 % en el dominio (validación EAN-13 y normalización de Excel); ≥ 75 % global del backend. |
 | RNF-16 | **Prueba de escaneo:** los tests decodifican los PNG generados con `zxing-cpp` y comparan con el código esperado. |
 | RNF-17 | **Prueba de EPS vectorial:** el EPS debe tener cabecera `%!PS-Adobe-3.0 EPSF-3.0`, `%%BoundingBox` y no contener imágenes raster embebidas. |
-| RNF-18 | Backend: `ruff` + `mypy --strict` sin errores. Frontend: ESLint + `tsc --noEmit` sin errores, Prettier. |
+| RNF-18 | Backend: `ruff` + `mypy --strict` sin errores. Frontend: `oxlint` + `tsc --noEmit` sin errores, Prettier. Gestor de paquetes: `pnpm` (versión fijada en `packageManager`). |
 | RNF-19 | Extensibilidad: agregar una simbología nueva requiere solo registrar una clase en el `SymbologyRegistry` y su entrada en el selector del front. |
 | RNF-20 | Configuración por variables de entorno (`pydantic-settings`), sin valores sensibles en el repo. |
 
@@ -342,7 +343,7 @@ VITE_API_URL=http://localhost:8000
 
 ### Fase 4 — Frontend: generación individual + despliegue en Vercel
 **Tareas**
-1. Generar tipos con `openapi-typescript` (script `npm run gen:api` contra el backend local).
+1. Generar tipos con `openapi-typescript` (script `pnpm gen:api` contra el backend local).
 2. `api/client.ts`: fetch con `VITE_API_URL`, timeout (RNF-06) y parseo del formato de error.
 3. `components/ServerStatus`: warm-up a `/health` al cargar con reintentos; estados de RF-20. Los botones de generar se deshabilitan hasta que el servidor esté listo.
 4. `lib/ean13.ts`: validación en cliente (RF-07) con tests (Vitest).

@@ -15,7 +15,8 @@
 - Código (variables, funciones, clases, rutas) en **inglés**; textos de UI, mensajes al usuario y docs en **español**.
 - Backend: Python 3.12, tipado completo, `ruff` + `mypy --strict`, `pytest`. Dependencias con `uv`.
 - Frontend: TypeScript estricto, componentes shadcn, formularios con `react-hook-form` + `zod`, datos con TanStack Query.
-- Tipos de la API en el front se generan con `npm run gen:api`; no los edites a mano.
+- Frontend con `pnpm` (no npm) y `oxlint` (no ESLint).
+- Tipos de la API en el front se generan con `pnpm gen:api`; no los edites a mano.
 
 ## Reglas que no se rompen
 - **Nunca escribir archivos en disco en runtime** (Render tiene disco efímero). Todo en memoria (`io.BytesIO`).
@@ -40,8 +41,8 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy app
 
 # Frontend
 cd frontend
-npm install
-npm run dev
-npm run gen:api        # requiere backend en localhost:8000
-npm run lint && npm run typecheck && npm run test && npm run build
+pnpm install
+pnpm dev
+pnpm gen:api           # requiere backend en localhost:8000
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```

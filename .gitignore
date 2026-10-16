@@ -29,3 +29,6 @@ backend/scripts/out/
 .idea/
 .DS_Store
 Thumbs.db
+
+# --- pnpm ---
+.pnpm-store/

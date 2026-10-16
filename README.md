@@ -35,7 +35,7 @@ La primera vez tarda unos minutos (descarga imágenes, instala Ghostscript y las
 | http://localhost:8000/health | Estado y versión del backend |
 | http://localhost:5173 | Frontend (Vite) |
 
-**¿Cuándo usar `--build`?** La primera vez y cada vez que cambien dependencias (`backend/pyproject.toml`, `backend/uv.lock` o `backend/Dockerfile`). Si solo cambias código, basta con `docker compose up`. El frontend instala sus dependencias (`npm ci`) en cada arranque, así que no necesita reconstruirse.
+**¿Cuándo usar `--build`?** La primera vez y cada vez que cambien dependencias (`backend/pyproject.toml`, `backend/uv.lock` o `backend/Dockerfile`). Si solo cambias código, basta con `docker compose up`. El frontend instala sus dependencias (`pnpm install`) en cada arranque, así que no necesita reconstruirse.
 
 **Recarga automática:** el código se monta como volumen. Los cambios en `backend/app/` reinician uvicorn en uno o dos segundos y los cambios en `frontend/src/` se ven al instante en el navegador.
 
@@ -77,7 +77,7 @@ curl -X POST localhost:8000/api/v1/barcodes/ean13/render \
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) (descarga Python 3.12 por su cuenta; no hace falta instalarlo aparte).
 - Ghostscript: `sudo apt install ghostscript` (Debian/Ubuntu/WSL) o `brew install ghostscript` (macOS). Verifica con `gs --version`.
-- Node.js 24 y npm.
+- Node.js 24 y pnpm: `corepack enable` (activa la versión fijada en `package.json`) o [instálalo](https://pnpm.io/installation).
 
 **Backend** (terminal 1):
 
@@ -91,8 +91,8 @@ uv run uvicorn app.main:app --reload      # http://localhost:8000
 
 ```bash
 cd frontend
-npm install
-npm run dev                               # http://localhost:5173
+pnpm install
+pnpm dev                                  # http://localhost:5173
 ```
 
 ### Variables de entorno
@@ -129,7 +129,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy app
 
 # Frontend
 cd frontend
-npm run lint && npm run typecheck && npm run build
+pnpm lint && pnpm typecheck && pnpm format:check && pnpm build   # lint con oxlint
 ```
 
 Los tests de generación necesitan Ghostscript; si no está instalado se omiten (aparecen como `skipped`).
