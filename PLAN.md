@@ -249,7 +249,7 @@ Base: `/api/v1`. Errores siempre con el formato:
 { "error": { "code": "INVALID_CHECK_DIGIT", "message": "El dígito de control debe ser 8.", "details": {} } }
 ```
 
-Códigos de error: `INVALID_CHARACTERS`, `INVALID_LENGTH`, `INVALID_CHECK_DIGIT`, `UNSUPPORTED_SYMBOLOGY`, `UNSUPPORTED_FORMAT`, `FILE_TOO_LARGE`, `TOO_MANY_ROWS`, `INVALID_FILE_TYPE`, `CODE_COLUMN_NOT_FOUND`, `RATE_LIMITED`, `RENDER_FAILED`.
+Códigos de error: `INVALID_CHARACTERS`, `INVALID_LENGTH`, `INVALID_CHECK_DIGIT`, `UNSUPPORTED_SYMBOLOGY`, `UNSUPPORTED_FORMAT`, `FILE_TOO_LARGE`, `TOO_MANY_ROWS`, `INVALID_FILE_TYPE`, `CODE_COLUMN_NOT_FOUND`, `RATE_LIMITED`, `RENDER_FAILED`, `INVALID_REQUEST` (validación del cuerpo o parámetros), `NOT_FOUND` (ruta inexistente), `INTERNAL_ERROR` (error inesperado, sin trazas).
 
 | Método | Ruta | Entrada | Salida |
 |---|---|---|---|
