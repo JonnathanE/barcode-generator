@@ -4,7 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Genera códigos de barras EAN-13 en PNG y EPS vectorial, listos para imprenta."
+    />
     <title>Generador de Códigos de Barras</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a light flash (next-themes key).
+      try {
+        const theme = localStorage.getItem('theme') ?? 'system'
+        const dark =
+          theme === 'dark' ||
+          (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
