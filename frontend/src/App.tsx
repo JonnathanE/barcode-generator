@@ -1,7 +1,16 @@
+import { lazy, Suspense } from 'react'
+
 import { GS1Notice } from '@/components/GS1Notice'
 import { ServerStatus } from '@/components/ServerStatus'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SingleBarcodeForm } from '@/features/single/SingleBarcodeForm'
+
+// Loaded on demand: people generating one code don't download the batch UI.
+const BatchPage = lazy(() =>
+  import('@/features/batch/BatchPage').then((module) => ({ default: module.BatchPage })),
+)
 
 function App() {
   return (
@@ -17,7 +26,20 @@ function App() {
       </header>
 
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-6">
-        <SingleBarcodeForm />
+        <Tabs defaultValue="single" className="gap-6">
+          <TabsList aria-label="Modo de generación">
+            <TabsTrigger value="single">Un código</TabsTrigger>
+            <TabsTrigger value="batch">Masivo desde Excel</TabsTrigger>
+          </TabsList>
+          <TabsContent value="single">
+            <SingleBarcodeForm />
+          </TabsContent>
+          <TabsContent value="batch">
+            <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+              <BatchPage />
+            </Suspense>
+          </TabsContent>
+        </Tabs>
         <GS1Notice />
       </main>
 

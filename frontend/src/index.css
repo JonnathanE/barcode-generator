@@ -128,3 +128,21 @@
     @apply font-sans;
   }
 }
+
+/* Indeterminate progress bar (batch generation); slower for reduced motion. */
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@utility animate-indeterminate {
+  animation: indeterminate 1.4s ease-in-out infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation-duration: 4s;
+  }
+}
