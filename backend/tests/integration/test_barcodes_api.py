@@ -232,3 +232,27 @@ def test_background_is_normalized(background: str, expected: str) -> None:
     from app.schemas.barcodes import RenderOptionsIn
 
     assert RenderOptionsIn(background=background).to_domain().background == expected
+
+
+def test_format_not_supported_by_symbology(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.symbologies.base import OutputFormat
+    from app.symbologies.ean13 import Ean13
+    from app.symbologies.registry import SymbologyRegistry
+
+    class PngOnly(Ean13):
+        id = "pngonly"
+        name = "Solo PNG"
+        supported_formats = frozenset({OutputFormat.PNG})
+
+    local = SymbologyRegistry()
+    local.register(PngOnly())
+    monkeypatch.setattr(barcodes, "registry", local)
+
+    response = client.post(
+        "/api/v1/barcodes/pngonly/render", json={"code": "7861234567898", "format": "eps"}
+    )
+
+    assert response.status_code == 422
+    error = assert_error(response.json(), "UNSUPPORTED_FORMAT")
+    assert error["message"] == "Solo PNG no se puede generar en formato EPS."
+    assert error["details"] == {"supported": ["png"]}

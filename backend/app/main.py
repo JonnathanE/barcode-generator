@@ -9,9 +9,11 @@ from app import __version__
 from app.api.error_handlers import register_error_handlers
 from app.api.routes import barcodes, health
 from app.core.config import get_settings
+from app.core.logging import configure_logging, log_requests
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 
 settings = get_settings()
+configure_logging(settings.log_level)
 
 app = FastAPI(
     title="Generador de Códigos de Barras",
@@ -19,6 +21,7 @@ app = FastAPI(
     description="Genera códigos de barras EAN-13 en PNG y EPS vectorial.",
 )
 
+app.middleware("http")(log_requests)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,

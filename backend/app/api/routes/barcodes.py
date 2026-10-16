@@ -70,8 +70,9 @@ async def render_code(
             render, resolved, code, body.format, body.options.to_domain()
         )
     except RenderError:
-        # Log the failure, never the code or the Ghostscript output (RNF-13).
-        logger.exception("render_failed", extra={"symbology": resolved.id, "format": body.format})
+        # No traceback or Ghostscript output: its operand stack dump can contain the
+        # hex-encoded code (RNF-13).
+        logger.error("render_failed", extra={"symbology": resolved.id, "format": body.format})
         raise AppError(
             ErrorCode.RENDER_FAILED, "No se pudo generar el código de barras. Intenta de nuevo."
         ) from None
