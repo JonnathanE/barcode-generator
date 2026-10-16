@@ -29,6 +29,7 @@ import struct
 import subprocess
 from binascii import hexlify
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 from itertools import batched
@@ -152,30 +153,56 @@ def _render_eps(
         yield _set_bounding_box(eps, width, height)
 
 
-def _render_png(
-    symbology: Symbology, codes: Sequence[str], options: RenderOptions
-) -> Iterator[bytes]:
+@dataclass(frozen=True, slots=True)
+class _PngGeometry:
+    module_points: float
+    left_px: int
+    bottom_px: int
+    width_px: int
+    height_px: int
+
+
+def _png_geometry(symbology: Symbology, options: RenderOptions) -> _PngGeometry:
     dpi = options.dpi
     module_px = max(1, round(symbology.module_mm * options.scale / 25.4 * dpi))
     module_points = module_px * 72 / dpi
     extent = symbology.extent(options, module_points)
     left_px = math.floor(extent.left * module_px)
     bottom_px = math.floor(extent.bottom * module_px)
-    width_px = math.ceil(extent.right * module_px) - left_px
-    height_px = math.ceil(extent.top * module_px) - bottom_px
+    return _PngGeometry(
+        module_points=module_points,
+        left_px=left_px,
+        bottom_px=bottom_px,
+        width_px=math.ceil(extent.right * module_px) - left_px,
+        height_px=math.ceil(extent.top * module_px) - bottom_px,
+    )
+
+
+def png_size(symbology: Symbology, options: RenderOptions) -> tuple[int, int]:
+    """Width and height in pixels of each PNG, without rendering anything."""
+    geometry = _png_geometry(symbology, options)
+    return geometry.width_px, geometry.height_px
+
+
+def _render_png(
+    symbology: Symbology, codes: Sequence[str], options: RenderOptions
+) -> Iterator[bytes]:
+    dpi = options.dpi
+    geometry = _png_geometry(symbology, options)
+    module_points = geometry.module_points
 
     program = _build_program(
         symbology,
         codes,
         {**symbology.bwipp_options(options, module_points), "inkspread": "0"},
         module_points=module_points,
-        origin=(-left_px * 72 / dpi, -bottom_px * 72 / dpi),
+        origin=(-geometry.left_px * 72 / dpi, -geometry.bottom_px * 72 / dpi),
         background="",
     )
     raster = _run_ghostscript(
         "-sDEVICE=pnggray",
         f"-r{dpi}",
-        f"-g{width_px}x{height_px}",
+        f"-g{geometry.width_px}x{geometry.height_px}",
         # Antialias text only: bars stay crisp, which scanners prefer.
         "-dTextAlphaBits=4",
         "-dGraphicsAlphaBits=1",
@@ -304,19 +331,20 @@ def _set_bounding_box(eps: bytes, width: float, height: float) -> bytes:
 
 
 def _colorize_png(raster: bytes, options: RenderOptions) -> bytes:
-    gray = Image.open(io.BytesIO(raster)).convert("L")
-    image: Image.Image
     if options.bar_color.upper() == "#000000" and options.background.upper() == "#FFFFFF":
-        image = gray  # default: keep the small 8-bit grayscale PNG
+        # Ghostscript's grayscale PNG already carries the DPI (pHYs); decoding and
+        # re-encoding it would double the time of large batches.
+        return raster
+    gray = Image.open(io.BytesIO(raster)).convert("L")
+    ink = ImageOps.invert(gray)  # 255 where fully inked
+    bars = Image.new("RGB", gray.size, _hex_to_rgb(options.bar_color))
+    image: Image.Image
+    if options.background == TRANSPARENT:
+        image = bars.convert("RGBA")
+        image.putalpha(ink)
     else:
-        ink = ImageOps.invert(gray)  # 255 where fully inked
-        bars = Image.new("RGB", gray.size, _hex_to_rgb(options.bar_color))
-        if options.background == TRANSPARENT:
-            image = bars.convert("RGBA")
-            image.putalpha(ink)
-        else:
-            paper = Image.new("RGB", gray.size, _hex_to_rgb(options.background))
-            image = Image.composite(bars, paper, ink)
+        paper = Image.new("RGB", gray.size, _hex_to_rgb(options.background))
+        image = Image.composite(bars, paper, ink)
 
     output = io.BytesIO()
     image.save(output, format="PNG", dpi=(options.dpi, options.dpi))

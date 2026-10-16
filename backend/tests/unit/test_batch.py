@@ -4,6 +4,7 @@ import io
 from app.services.batch import (
     REPORT_HEADER,
     RowStatus,
+    batch_limits,
     build_report_csv,
     validate_batch,
 )
@@ -132,3 +133,18 @@ def test_report_csv_lists_all_rows_with_bom_and_formula_protection() -> None:
     assert rows[2][1] == "'+5"
     assert rows[3][3] == "duplicado"
     assert len(rows) == 4
+
+
+def test_batch_limits_shrink_only_for_large_pngs() -> None:
+    from app.symbologies.base import RenderOptions
+
+    both = [OutputFormat.PNG, OutputFormat.EPS]
+    assert batch_limits(EAN13, both, RenderOptions(scale=1), 500).max_rows == 500
+    assert batch_limits(EAN13, both, RenderOptions(scale=5, dpi=300), 500).max_rows == 500
+    big = batch_limits(EAN13, both, RenderOptions(scale=5, dpi=600), 500)
+    assert (big.max_rows, big.png_width_px, big.png_height_px) == (241, 4446, 930)
+    assert (
+        batch_limits(EAN13, [OutputFormat.EPS], RenderOptions(scale=5, dpi=600), 500).max_rows
+        == 500
+    )
+    assert batch_limits(EAN13, both, RenderOptions(scale=1), 50).max_rows == 50

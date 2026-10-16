@@ -10,15 +10,22 @@ from enum import StrEnum
 from app.core.errors import AppError
 from app.domain.filenames import FilenameAllocator, sanitize
 from app.services.excel_reader import SheetRow
-from app.services.renderer import render_many
+from app.services.renderer import png_size, render_many
 from app.symbologies.base import OutputFormat, RenderOptions, Symbology
 
 REPORT_FILENAME = "reporte.csv"
+
+PNG_PIXEL_BUDGET = 1_000_000_000
+"""Pixels of PNG per batch. Measured on 0.1 CPU, a PNG costs ~0.03 s + 0.093 s per
+megapixel, so this keeps the slowest batch (scale 5 at 600 DPI) near 100 s, under
+the client's 180 s timeout. Common options stay at MAX_BATCH_ROWS."""
 REPORT_HEADER = ["fila", "valor_original", "codigo", "estado", "mensaje", "archivo"]
 # Excel runs cells starting with these as formulas (CSV injection).
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 # PNG is already compressed: deflating it again only burns CPU (0.1 CPU on Render).
+# EPS: level 1 is ~4x faster than the default 6 for a ~20% larger ZIP.
 _COMPRESSION = {OutputFormat.PNG: zipfile.ZIP_STORED, OutputFormat.EPS: zipfile.ZIP_DEFLATED}
+_EPS_COMPRESS_LEVEL = 1
 
 
 class RowStatus(StrEnum):
@@ -54,6 +61,29 @@ class BatchReport:
     @property
     def valid_rows(self) -> list[BatchRow]:
         return [row for row in self.rows if row.status is RowStatus.OK]
+
+
+@dataclass(frozen=True, slots=True)
+class BatchLimits:
+    max_rows: int
+    png_width_px: int | None
+    png_height_px: int | None
+
+
+def batch_limits(
+    symbology: Symbology,
+    formats: Sequence[OutputFormat],
+    options: RenderOptions,
+    max_batch_rows: int,
+) -> BatchLimits:
+    """Rows allowed for these options: large PNGs lower the limit (RF-19, RNF-02)."""
+    if OutputFormat.PNG not in formats:
+        return BatchLimits(max_rows=max_batch_rows, png_width_px=None, png_height_px=None)
+    width, height = png_size(symbology, options)
+    by_pixels = max(1, PNG_PIXEL_BUDGET // (width * height))
+    return BatchLimits(
+        max_rows=min(max_batch_rows, by_pixels), png_width_px=width, png_height_px=height
+    )
 
 
 def validate_batch(symbology: Symbology, sheet_rows: Sequence[SheetRow]) -> BatchReport:
@@ -142,7 +172,10 @@ def build_zip(
             files = render_many(symbology, codes, fmt, options)
             for row, content in zip(valid, files, strict=True):
                 archive.writestr(
-                    f"{fmt}/{row.filename}.{fmt}", content, compress_type=_COMPRESSION[fmt]
+                    f"{fmt}/{row.filename}.{fmt}",
+                    content,
+                    compress_type=_COMPRESSION[fmt],
+                    compresslevel=_EPS_COMPRESS_LEVEL,
                 )
         archive.writestr(
             REPORT_FILENAME, build_report_csv(report, formats), compress_type=zipfile.ZIP_DEFLATED
