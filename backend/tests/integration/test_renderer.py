@@ -9,7 +9,8 @@ import zxingcpp
 from PIL import Image
 
 from app.core.config import get_settings
-from app.services.renderer import RenderError, _load_bwipp, render
+from app.services import renderer
+from app.services.renderer import RenderError, _load_bwipp, render, render_many
 from app.symbologies.base import OutputFormat, RenderOptions
 from app.symbologies.registry import registry
 
@@ -292,3 +293,95 @@ def test_bwipp_subset_contains_encoder_and_its_dependencies_only() -> None:
 def test_bwipp_unknown_encoder_raises_render_error() -> None:
     with pytest.raises(RenderError, match="desconocido"):
         _load_bwipp("not-a-barcode")
+
+
+# ---------- Batches (render_many) ----------
+
+BATCH = ["7861234567898", "4006381333931", "5901234123457", "9780306406157", "0000000000000"]
+
+
+@pytest.mark.parametrize("fmt", list(OutputFormat))
+def test_render_many_returns_one_file_per_code_in_order(fmt: OutputFormat) -> None:
+    files = list(render_many(EAN13, BATCH, fmt, RenderOptions(scale=1)))
+
+    assert len(files) == len(BATCH)
+    for code, data in zip(BATCH, files, strict=True):
+        image = Image.open(io.BytesIO(data)) if fmt is OutputFormat.PNG else rasterize(data)
+        assert decode(image) == [code]
+
+
+def test_render_many_eps_files_are_standalone_eps() -> None:
+    files = list(render_many(EAN13, BATCH[:2], OutputFormat.EPS, RenderOptions()))
+
+    for data in files:
+        assert data.startswith(b"%!PS-Adobe-3.0 EPSF-3.0\n")
+        assert re.search(rb"^%%Pages: 1$", data, re.M)
+        assert data.count(b"%%Page: ") == 1
+        assert b"/EPS2Write true def" in data and b"/SetPageSize false def" in data
+        assert data.rstrip().endswith(b"%%EOF")
+
+
+def test_render_many_uses_one_process_per_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(renderer, "CODES_PER_PROCESS", 2)
+    calls: list[list[str]] = []
+    real_run = subprocess.run
+
+    def spy(args: list[str], **kwargs: Any) -> Any:
+        calls.append(args)
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+
+    files = list(render_many(EAN13, BATCH, OutputFormat.PNG, RenderOptions(scale=1)))
+
+    assert len(calls) == 3  # 2 + 2 + 1
+    assert [decode(Image.open(io.BytesIO(f))) for f in files] == [[c] for c in BATCH]
+
+
+def test_render_many_is_lazy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(renderer, "CODES_PER_PROCESS", 2)
+    calls = 0
+    real_run = subprocess.run
+
+    def spy(args: list[str], **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+
+    files = render_many(EAN13, BATCH, OutputFormat.EPS, RenderOptions())
+    next(files)
+
+    assert calls == 1
+
+
+def test_invalid_code_in_batch_fails_the_call() -> None:
+    with pytest.raises(RenderError, match="BWIPP ERROR"):
+        list(render_many(EAN13, ["7861234567898", "123"], OutputFormat.PNG, RenderOptions()))
+
+
+# ---------- Output splitting ----------
+
+
+def test_split_pngs_rejects_truncated_output() -> None:
+    valid = render(EAN13, CODE, OutputFormat.PNG, RenderOptions())
+
+    assert renderer._split_pngs(valid + valid) == [valid, valid]
+    with pytest.raises(RenderError, match="truncado"):
+        renderer._split_pngs(valid[:-20])
+    with pytest.raises(RenderError, match="inesperada"):
+        renderer._split_pngs(b"not a png")
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        (b"%!PS-Adobe-3.0\n%%EndComments\n", "Estructura inesperada"),
+        (b"%!PS\n%%BeginProlog\n%%EndProlog\n%%Trailer\n", "Cabecera inesperada"),
+        (b"%!PS-Adobe-3.0\n%%BeginProlog\n%%EndProlog\n%%Trailer\n", "Prolog inesperado"),
+    ],
+)
+def test_split_ps_document_rejects_unexpected_structure(document: bytes, message: str) -> None:
+    with pytest.raises(RenderError, match=message):
+        renderer._split_ps_document(document, 1)

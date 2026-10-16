@@ -3,17 +3,20 @@
 Pipeline (PLAN.md §5.3, option A):
 
 * The PostScript program is the minimal BWIPP subset for the encoder (``barcode.ps``
-  shipped with ``treepoem``, filtered by its ``--REQUIRES`` metadata) plus the
-  invocation. Parsing the full 1 MB library dominated render time on 0.1 CPU.
-* The page is exactly the symbol's extent including quiet zones (RF-06a), so the
+  shipped with ``treepoem``, filtered by its ``--REQUIRES`` metadata) plus one page
+  per code. Starting Ghostscript and parsing BWIPP cost ~0.9 s on 0.1 CPU, drawing a
+  code ~0.1 s, so batches render up to ``CODES_PER_PROCESS`` codes per process.
+* Each page is exactly the symbol's extent including quiet zones (RF-06a), so the
   output needs no cropping and the background covers the quiet zones.
-* EPS: ``gs -sDEVICE=eps2write`` flattens the program into vector paths; text is
+* EPS: ``gs -sDEVICE=ps2write`` flattens the pages into vector paths; text is
   converted to outlines (``-dNoOutputFonts``) so print shops don't depend on font
-  substitution. Exact physical size.
-* PNG: one ``pnggray`` pass (black on white), colorized afterwards with Pillow using
-  the ink coverage as mask, so antialiased text edges stay right on any background,
-  transparent included. Modules are snapped to whole pixels (and BWIPP's ink spread
-  is disabled) so bars don't get uneven widths at low DPI.
+  substitution. eps2write refuses multi-page output to stdout, so the ps2write
+  document is split into one EPS per page: same prolog with eps2write's two flags,
+  which yields what eps2write would have produced. Exact physical size.
+* PNG: ``pnggray`` pages (black on white), split by PNG chunks and colorized with
+  Pillow using the ink coverage as mask, so antialiased text edges stay right on any
+  background, transparent included. Modules are snapped to whole pixels (and BWIPP's
+  ink spread is disabled) so bars don't get uneven widths at low DPI.
 
 Every Ghostscript call uses ``-dSAFER``, stdin/stdout (no temp files) and a timeout.
 """
@@ -22,10 +25,13 @@ import io
 import math
 import re
 import shutil
+import struct
 import subprocess
 from binascii import hexlify
+from collections.abc import Iterator, Sequence
 from functools import cache
 from importlib import resources
+from itertools import batched
 
 from PIL import Image, ImageOps
 
@@ -38,20 +44,24 @@ from app.symbologies.base import (
     Symbology,
 )
 
+CODES_PER_PROCESS = 100
+"""Bounds Ghostscript memory and the work lost if one call fails."""
+
 _GS_BASE_ARGS = ("-dSAFER", "-dQUIET", "-dNOPAUSE", "-dBATCH")
 
-_PROGRAM_TEMPLATE = """\
-%!PS
-{bwipp}
+_PROGRAM_HEADER = "%!PS\n{bwipp}\n/Helvetica findfont 10 scalefont setfont\n"
+
+# One page per code. On a BWIPP error the page is still emitted (blank) so the page
+# count stays aligned with the codes; the error goes to stderr and fails the call.
+_PAGE_TEMPLATE = """\
+gsave
 {background}
-/Helvetica findfont 10 scalefont setfont
 {{
   {origin_x} {origin_y} translate
   {module_points} {module_points} scale
   0 0 moveto
   {data} {options} {encoder} cvn
   /uk.co.terryburton.bwipp findresource exec
-  showpage
 }} stopped {{
   $error /errorname get dup length string cvs 0 6 getinterval (bwipp.) ne {{ stop }} if
   (%stderr) (w) file
@@ -62,6 +72,8 @@ _PROGRAM_TEMPLATE = """\
   dup (\\n) writestring
   flushfile
 }} if
+grestore
+showpage
 """
 
 _BWIPP_BLOCK = re.compile(
@@ -69,6 +81,15 @@ _BWIPP_BLOCK = re.compile(
 )
 _BWIPP_REQUIRES = re.compile(r"^% --REQUIRES ([\w ]+)--$", re.M)
 _EPS_BOUNDING_BOX = re.compile(rb"^%%(HiRes)?BoundingBox: .*$", re.M)
+_PS_PAGE = re.compile(rb"^%%Page: \d+ \d+\n", re.M)
+_PS_PAGE_BOUNDING_BOX = re.compile(rb"^%%PageBoundingBox: .*\n", re.M)
+_PS_PAGES = re.compile(rb"^%%Pages: \d+$", re.M)
+# ps2write vs eps2write prolog: the only differences (checked on Ghostscript 10.0x).
+_EPS_PROLOG_FLAGS = (
+    (b"/SetPageSize true def", b"/SetPageSize false def"),
+    (b"/EPS2Write false def", b"/EPS2Write true def"),
+)
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class RenderError(Exception):
@@ -77,14 +98,28 @@ class RenderError(Exception):
 
 def render(symbology: Symbology, code: str, fmt: OutputFormat, options: RenderOptions) -> bytes:
     """Render an already normalized ``code``. Blocking: call it from a threadpool."""
-    match fmt:
-        case OutputFormat.PNG:
-            return _render_png(symbology, code, options)
-        case OutputFormat.EPS:
-            return _render_eps(symbology, code, options)
+    return next(render_many(symbology, [code], fmt, options))
 
 
-def _render_eps(symbology: Symbology, code: str, options: RenderOptions) -> bytes:
+def render_many(
+    symbology: Symbology, codes: Sequence[str], fmt: OutputFormat, options: RenderOptions
+) -> Iterator[bytes]:
+    """Render normalized ``codes`` in order, one Ghostscript process per chunk.
+
+    Lazy: files are produced chunk by chunk, so a ZIP can be written without holding
+    every file in memory. Blocking: consume it from a threadpool.
+    """
+    for chunk in batched(codes, CODES_PER_PROCESS):
+        match fmt:
+            case OutputFormat.PNG:
+                yield from _render_png(symbology, chunk, options)
+            case OutputFormat.EPS:
+                yield from _render_eps(symbology, chunk, options)
+
+
+def _render_eps(
+    symbology: Symbology, codes: Sequence[str], options: RenderOptions
+) -> Iterator[bytes]:
     module_points = symbology.module_mm * options.scale / MM_PER_POINT
     extent = symbology.extent(options, module_points)
     width = extent.width * module_points
@@ -93,7 +128,7 @@ def _render_eps(symbology: Symbology, code: str, options: RenderOptions) -> byte
 
     program = _build_program(
         symbology,
-        code,
+        codes,
         {
             **symbology.bwipp_options(options, module_points),
             "barcolor": bar_color,
@@ -103,19 +138,23 @@ def _render_eps(symbology: Symbology, code: str, options: RenderOptions) -> byte
         origin=(-extent.left * module_points, -extent.bottom * module_points),
         background=_ps_background(options.background, width, height),
     )
-    eps = _run_ghostscript(
-        "-sDEVICE=eps2write",
+    document = _run_ghostscript(
+        "-sDEVICE=ps2write",
         f"-dDEVICEWIDTHPOINTS={width:.4f}",
         f"-dDEVICEHEIGHTPOINTS={height:.4f}",
         "-dNoOutputFonts",
         stdin=program,
+        codes=len(codes),
     )
-    # eps2write computes the box from the marks; widen it to the whole page so the
-    # quiet zones are part of the file even with a transparent background.
-    return _set_bounding_box(eps, width, height)
+    for eps in _split_ps_document(document, len(codes)):
+        # The box covers the whole page so the quiet zones are part of the file even
+        # with a transparent background.
+        yield _set_bounding_box(eps, width, height)
 
 
-def _render_png(symbology: Symbology, code: str, options: RenderOptions) -> bytes:
+def _render_png(
+    symbology: Symbology, codes: Sequence[str], options: RenderOptions
+) -> Iterator[bytes]:
     dpi = options.dpi
     module_px = max(1, round(symbology.module_mm * options.scale / 25.4 * dpi))
     module_points = module_px * 72 / dpi
@@ -127,7 +166,7 @@ def _render_png(symbology: Symbology, code: str, options: RenderOptions) -> byte
 
     program = _build_program(
         symbology,
-        code,
+        codes,
         {**symbology.bwipp_options(options, module_points), "inkspread": "0"},
         module_points=module_points,
         origin=(-left_px * 72 / dpi, -bottom_px * 72 / dpi),
@@ -141,33 +180,45 @@ def _render_png(symbology: Symbology, code: str, options: RenderOptions) -> byte
         "-dTextAlphaBits=4",
         "-dGraphicsAlphaBits=1",
         stdin=program,
+        codes=len(codes),
     )
-    return _colorize_png(raster, options)
+    pages = _split_pngs(raster)
+    if len(pages) != len(codes):
+        raise RenderError(f"Ghostscript generó {len(pages)} imágenes para {len(codes)} códigos")
+    for page in pages:
+        yield _colorize_png(page, options)
 
 
 def _build_program(
     symbology: Symbology,
-    data: str,
+    codes: Sequence[str],
     bwipp_options: dict[str, str | bool],
     *,
     module_points: float,
     origin: tuple[float, float],
     background: str,
 ) -> bytes:
-    return _PROGRAM_TEMPLATE.format(
-        bwipp=_load_bwipp(symbology.bwipp_name),
-        background=background,
-        origin_x=f"{origin[0]:.6f}",
-        origin_y=f"{origin[1]:.6f}",
-        module_points=f"{module_points:.6f}",
-        data=_ps_hex_string(data),
-        options=_ps_hex_string(_format_bwipp_options(bwipp_options)),
-        encoder=_ps_hex_string(symbology.bwipp_name),
-    ).encode("ascii")
+    options = _ps_hex_string(_format_bwipp_options(bwipp_options))
+    encoder = _ps_hex_string(symbology.bwipp_name)
+    pages = (
+        _PAGE_TEMPLATE.format(
+            background=background,
+            origin_x=f"{origin[0]:.6f}",
+            origin_y=f"{origin[1]:.6f}",
+            module_points=f"{module_points:.6f}",
+            data=_ps_hex_string(code),
+            options=options,
+            encoder=encoder,
+        )
+        for code in codes
+    )
+    header = _PROGRAM_HEADER.format(bwipp=_load_bwipp(symbology.bwipp_name))
+    return (header + "".join(pages)).encode("ascii")
 
 
-def _run_ghostscript(*device_args: str, stdin: bytes) -> bytes:
-    timeout = get_settings().ghostscript_timeout_seconds
+def _run_ghostscript(*device_args: str, stdin: bytes, codes: int = 1) -> bytes:
+    # The base timeout covers ~10 codes; bigger chunks get proportionally more time.
+    timeout = get_settings().ghostscript_timeout_seconds * max(1.0, codes / 10)
     args = [_ghostscript_binary(), *_GS_BASE_ARGS, *device_args, "-sOutputFile=-", "-"]
     try:
         # Fixed argv (no shell) and SAFER mode; user data only travels hex-encoded on stdin.
@@ -175,12 +226,64 @@ def _run_ghostscript(*device_args: str, stdin: bytes) -> bytes:
             args, input=stdin, capture_output=True, timeout=timeout, check=False
         )
     except subprocess.TimeoutExpired as exc:
-        raise RenderError(f"Ghostscript superó el tiempo límite de {timeout} s") from exc
+        raise RenderError(f"Ghostscript superó el tiempo límite de {timeout:g} s") from exc
 
     stderr = result.stderr.decode("utf-8", errors="replace").strip()
     if result.returncode != 0 or "BWIPP ERROR:" in stderr or not result.stdout:
         raise RenderError(stderr or f"Ghostscript terminó con código {result.returncode}")
     return result.stdout
+
+
+def _split_ps_document(document: bytes, count: int) -> list[bytes]:
+    """Split a multi-page ps2write document into single-page EPS files."""
+    try:
+        prolog_start = document.index(b"%%BeginProlog")
+        prolog_end = document.index(b"%%EndProlog\n") + len(b"%%EndProlog\n")
+        trailer_start = document.rindex(b"%%Trailer")
+    except ValueError as exc:
+        raise RenderError("Estructura inesperada de la salida de ps2write") from exc
+
+    header = document[:prolog_start]
+    if not header.startswith(b"%!PS-Adobe-3.0\n"):
+        raise RenderError("Cabecera inesperada de la salida de ps2write")
+    header = b"%!PS-Adobe-3.0 EPSF-3.0\n" + header.removeprefix(b"%!PS-Adobe-3.0\n")
+    header = _PS_PAGES.sub(b"%%Pages: 1", header)
+
+    prolog = document[prolog_start:prolog_end]
+    for ps2write_flag, eps2write_flag in _EPS_PROLOG_FLAGS:
+        if prolog.count(ps2write_flag) != 1:
+            raise RenderError("Prolog inesperado de ps2write")
+        prolog = prolog.replace(ps2write_flag, eps2write_flag)
+
+    pages = _PS_PAGE.split(document[prolog_end:trailer_start])[1:]
+    if len(pages) != count:
+        raise RenderError(f"ps2write generó {len(pages)} páginas para {count} códigos")
+    trailer = document[trailer_start:]
+    return [
+        header + prolog + b"%%Page: 1 1\n" + _PS_PAGE_BOUNDING_BOX.sub(b"", page) + trailer
+        for page in pages
+    ]
+
+
+def _split_pngs(data: bytes) -> list[bytes]:
+    """Split concatenated PNG files by walking their length-prefixed chunks."""
+    files: list[bytes] = []
+    position = 0
+    while position < len(data):
+        if data[position : position + 8] != _PNG_SIGNATURE:
+            raise RenderError("Salida PNG inesperada de Ghostscript")
+        cursor = position + 8
+        while True:
+            if cursor + 8 > len(data):
+                raise RenderError("PNG truncado en la salida de Ghostscript")
+            (length,) = struct.unpack(">I", data[cursor : cursor + 4])
+            chunk_type = data[cursor + 4 : cursor + 8]
+            cursor += 12 + length  # length + type + data + CRC
+            if chunk_type == b"IEND":
+                break
+        files.append(data[position:cursor])
+        position = cursor
+    return files
 
 
 def _ps_background(background: str, width: float, height: float) -> str:
