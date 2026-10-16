@@ -1,10 +1,7 @@
 import csv
 import io
 import shutil
-import sys
 import zipfile
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,40 +13,12 @@ from app.services.batch import build_zip, validate_batch
 from app.services.excel_reader import read_sheet
 from app.symbologies.base import OutputFormat, RenderOptions
 from app.symbologies.registry import registry
+from tests.disk_writes import no_disk_writes
 
 pytestmark = pytest.mark.skipif(shutil.which("gs") is None, reason="Ghostscript no instalado")
 
 EAN13 = registry.get("ean13")
 FIXTURES = Path(__file__).parent.parent / "fixtures"
-
-# --- Detect any file opened for writing (RNF-07) -------------------------------------
-_write_opens: list[str] | None = None
-
-
-def _audit(event: str, args: tuple[Any, ...]) -> None:
-    if _write_opens is None or event != "open":
-        return
-    path, mode, flags = args
-    if isinstance(path, int):
-        return  # a file descriptor (e.g. the pipe to Ghostscript's stdin), not a file
-    writes = (isinstance(mode, str) and any(c in mode for c in "wax+")) or (
-        isinstance(flags, int) and flags & 0o3  # O_WRONLY | O_RDWR
-    )
-    if writes:
-        _write_opens.append(str(path))
-
-
-sys.addaudithook(_audit)  # audit hooks can't be removed; it's inert outside the context
-
-
-@contextmanager
-def no_disk_writes() -> Iterator[list[str]]:
-    global _write_opens
-    _write_opens = []
-    try:
-        yield _write_opens
-    finally:
-        _write_opens = None
 
 
 def report_for(name: str) -> Any:

@@ -40,7 +40,7 @@ def test_valid_text_codes_keep_row_numbers_and_names() -> None:
 
     assert [(r.row, r.code, r.name, r.error) for r in rows] == [
         (2, "786123456789", "leche-entera", None),
-        (3, "7861234567898", None, None),
+        (3, "9780306406157", None, None),
         (4, "400-6381-33393-1", "galletas", None),
         (5, "590 1234 12345 7", None, None),
     ]
@@ -85,7 +85,7 @@ def test_numbers_are_read_as_digits() -> None:
 
     assert [(r.input, r.code) for r in rows[:3]] == [
         ("786123456789", "786123456789"),
-        ("7861234567898", "7861234567898"),
+        ("5901234123457", "5901234123457"),
         ("4006381333931", "4006381333931"),
     ]
     decimal = rows[4]
@@ -106,7 +106,7 @@ def test_eleven_digit_number_is_an_error_without_restore_flag() -> None:
 def test_restore_flag_pads_numbers_to_13_digits() -> None:
     rows = read("numericos.xlsx", restore=True)
 
-    assert codes(rows)[:4] == ["0786123456789", "7861234567898", "4006381333931", "0012345678905"]
+    assert codes(rows)[:4] == ["0786123456789", "5901234123457", "4006381333931", "0012345678905"]
 
 
 def test_restore_flag_does_not_touch_text_cells() -> None:
