@@ -42,6 +42,10 @@ jobs:
       - name: Instalar dependencias
         run: pnpm install --frozen-lockfile
 
+      # Solo lo que llega al navegador; las herramientas de desarrollo se revisan aparte.
+      - name: Auditoría de dependencias de producción
+        run: pnpm audit --prod --audit-level high
+
       - name: Oxlint
         run: pnpm lint
 

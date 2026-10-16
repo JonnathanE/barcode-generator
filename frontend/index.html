@@ -9,16 +9,8 @@
       content="Genera códigos de barras EAN-13 en PNG y EPS vectorial, listos para imprenta."
     />
     <title>Generador de Códigos de Barras</title>
-    <script>
-      // Apply the saved theme before first paint to avoid a light flash (same key as ThemeProvider).
-      try {
-        const theme = localStorage.getItem('theme') ?? 'system'
-        const dark =
-          theme === 'dark' ||
-          (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
-        document.documentElement.classList.toggle('dark', dark)
-      } catch {}
-    </script>
+    <!-- Blocking on purpose: applies the saved theme before first paint. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

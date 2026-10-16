@@ -45,8 +45,16 @@ jobs:
       - name: Mypy
         run: uv run mypy app tests scripts
 
-      - name: Pytest
+      - name: Pytest (cobertura global ≥ 75 %, RNF-15)
         run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=75
+
+      - name: Cobertura del dominio ≥ 90 % (RNF-15)
+        run: uv run coverage report --include="app/domain/*" --fail-under=90
+
+      - name: Auditoría de dependencias (pip-audit)
+        run: |
+          uv export --frozen --no-hashes --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit --requirement "$RUNNER_TEMP/requirements.txt" --progress-spinner off
 
   docker:
     name: Build y prueba de humo de la imagen
