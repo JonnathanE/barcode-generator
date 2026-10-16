@@ -15,12 +15,136 @@ El plan completo (requerimientos, arquitectura y fases) está en [`PLAN.md`](PLA
 
 ## Desarrollo local
 
+Hay dos formas de levantar el proyecto: con **Docker** (recomendada, no requiere instalar Python ni Ghostscript) o **sin Docker**, corriendo cada servicio directamente en tu máquina.
+
+### Opción A: Docker (recomendada)
+
+**Requisitos:** [Docker](https://docs.docker.com/get-docker/) con Docker Compose v2 (`docker compose version`).
+
 ```bash
-docker compose up
+git clone https://github.com/JonnathanE/barcode-generator.git
+cd barcode-generator
+docker compose up --build
 ```
 
-- Backend: http://localhost:8000 (`/health`, `/docs`)
-- Frontend: http://localhost:5173
+La primera vez tarda unos minutos (descarga imágenes, instala Ghostscript y las dependencias). Cuando veas el backend `healthy`, quedan disponibles:
+
+| URL | Qué es |
+|---|---|
+| http://localhost:8000/docs | Swagger: documentación interactiva para probar la API |
+| http://localhost:8000/health | Estado y versión del backend |
+| http://localhost:5173 | Frontend (Vite) |
+
+**¿Cuándo usar `--build`?** La primera vez y cada vez que cambien dependencias (`backend/pyproject.toml`, `backend/uv.lock` o `backend/Dockerfile`). Si solo cambias código, basta con `docker compose up`. El frontend instala sus dependencias (`npm ci`) en cada arranque, así que no necesita reconstruirse.
+
+**Recarga automática:** el código se monta como volumen. Los cambios en `backend/app/` reinician uvicorn en uno o dos segundos y los cambios en `frontend/src/` se ven al instante en el navegador.
+
+**Comandos útiles:**
+
+```bash
+docker compose up -d --build        # levantar en segundo plano
+docker compose ps                   # estado de los servicios
+docker compose logs -f backend      # logs JSON del backend en vivo
+docker compose restart backend      # reiniciar (p. ej., tras editar backend/.env)
+docker compose exec backend gs --version   # comando dentro del contenedor
+docker compose down                 # apagar todo
+docker compose down -v              # apagar y borrar el volumen de node_modules
+```
+
+#### Probar la API desde Swagger
+
+1. Abre http://localhost:8000/docs.
+2. Despliega `POST /api/v1/barcodes/{symbology}/render` y pulsa **Try it out**.
+3. Escribe `ean13` en `symbology`, elige un ejemplo del cuerpo (o edítalo) y pulsa **Execute**.
+4. El PNG se muestra en la respuesta; el EPS aparece como enlace de descarga.
+
+O desde la terminal:
+
+```bash
+# Validar (calcula el dígito de control)
+curl -X POST localhost:8000/api/v1/barcodes/ean13/validate \
+  -H 'Content-Type: application/json' -d '{"code": "786-1234-56789"}'
+
+# Generar un PNG con fondo transparente
+curl -X POST localhost:8000/api/v1/barcodes/ean13/render \
+  -H 'Content-Type: application/json' -o codigo.png \
+  -d '{"code": "786123456789", "format": "png", "options": {"background": "transparent"}}'
+```
+
+### Opción B: sin Docker
+
+**Requisitos:**
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (descarga Python 3.12 por su cuenta; no hace falta instalarlo aparte).
+- Ghostscript: `sudo apt install ghostscript` (Debian/Ubuntu/WSL) o `brew install ghostscript` (macOS). Verifica con `gs --version`.
+- Node.js 24 y npm.
+
+**Backend** (terminal 1):
+
+```bash
+cd backend
+uv sync                                   # crea .venv con dependencias de desarrollo
+uv run uvicorn app.main:app --reload      # http://localhost:8000
+```
+
+**Frontend** (terminal 2):
+
+```bash
+cd frontend
+npm install
+npm run dev                               # http://localhost:5173
+```
+
+### Variables de entorno
+
+Todas tienen valores por defecto pensados para desarrollo, así que **no es necesario crear archivos `.env`** para empezar. Si quieres cambiar alguna:
+
+```bash
+cp backend/.env.example backend/.env       # luego edita los valores
+cp frontend/.env.example frontend/.env     # solo para la Opción B
+```
+
+| Variable (backend) | Por defecto | Para qué sirve |
+|---|---|---|
+| `APP_ENV` | `development` | `development`, `test` o `production` (en producción se rechaza `ALLOWED_ORIGINS=*`) |
+| `ALLOWED_ORIGINS` | `http://localhost:5173` | Orígenes permitidos por CORS, separados por comas |
+| `RATE_LIMIT_SINGLE` | `60/minute` | Límite por IP de `validate` y `render`; súbelo si te bloquea al probar |
+| `RATE_LIMIT_BATCH` | `5/minute` | Límite por IP del modo masivo |
+| `MAX_UPLOAD_MB` / `MAX_BATCH_ROWS` | `2` / `500` | Límites del modo masivo |
+| `GHOSTSCRIPT_TIMEOUT_SECONDS` | `20` | Tiempo máximo por llamada a Ghostscript |
+| `LOG_LEVEL` | `INFO` | Nivel de los logs JSON |
+
+En el frontend, `VITE_API_URL` (por defecto `http://localhost:8000`) indica dónde está el backend. Con Docker ya viene configurada en `docker-compose.yml`.
+
+### Tests y calidad
+
+```bash
+# Backend dentro del contenedor (no requiere nada instalado localmente)
+docker compose exec backend uv run pytest --cov=app
+
+# Backend local (Opción B)
+cd backend
+uv run pytest --cov=app                   # tests + cobertura
+uv run ruff check . && uv run ruff format --check . && uv run mypy app
+
+# Frontend
+cd frontend
+npm run lint && npm run typecheck && npm run build
+```
+
+Los tests de generación necesitan Ghostscript; si no está instalado se omiten (aparecen como `skipped`).
+
+Para generar archivos de muestra y medir tiempos: `cd backend && uv run python -m scripts.spike_render` (los deja en `backend/scripts/out/`, ignorado por git).
+
+### Problemas comunes
+
+| Síntoma | Solución |
+|---|---|
+| `port is already allocated` al levantar | Otro proceso usa el 8000 o el 5173. Detenlo, o cambia el puerto de la izquierda en `docker-compose.yml` (p. ej., `"8001:8000"`) |
+| `ModuleNotFoundError` en el backend tras un `git pull` | Cambiaron dependencias: `docker compose up --build` (o `uv sync` sin Docker) |
+| `Ghostscript (gs) no está instalado` | Opción B sin Ghostscript: instálalo (ver requisitos) |
+| `429 RATE_LIMITED` mientras pruebas | Sube `RATE_LIMIT_SINGLE` en `backend/.env` y `docker compose restart backend` |
+| El frontend no reacciona a cambios en WSL | Mantén el proyecto dentro del sistema de archivos de Linux (`~/...`), no en `/mnt/c/...` |
 
 ## Generación de PNG y EPS
 
