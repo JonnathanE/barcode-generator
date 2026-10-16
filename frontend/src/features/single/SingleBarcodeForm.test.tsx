@@ -78,7 +78,7 @@ describe('SingleBarcodeForm', () => {
         format: 'png',
         options: {
           include_text: true,
-          scale: 2,
+          scale: 1,
           bar_height_mm: 22.85,
           dpi: 150,
           bar_color: '#000000',

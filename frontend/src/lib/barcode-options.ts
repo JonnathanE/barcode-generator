@@ -29,7 +29,7 @@ export type BarcodeOptionsValues = z.infer<typeof barcodeOptionsSchema>
 // it doesn't consider a valid color with black.
 export const DEFAULT_OPTIONS: BarcodeOptionsValues = {
   include_text: true,
-  scale: 2,
+  scale: 1,
   bar_height_mm: 22.85,
   dpi: 300,
   bar_color: '#000000',
