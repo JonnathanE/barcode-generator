@@ -2,16 +2,21 @@
 
 Pipeline (PLAN.md §5.3, option A):
 
-1. Build a PostScript program: the BWIPP library (``barcode.ps`` shipped with
-   ``treepoem``) plus the encoder invocation.
-2. ``gs -sDEVICE=eps2write`` flattens it into a small vector EPS with a tight
-   ``%%BoundingBox``. For the downloadable EPS, text is converted to outlines
-   (``-dNoOutputFonts``) so print shops don't depend on font substitution.
-3. For PNG, that EPS is rasterized with ``pnggray`` at the requested DPI.
+* The PostScript program is the minimal BWIPP subset for the encoder (``barcode.ps``
+  shipped with ``treepoem``, filtered by its ``--REQUIRES`` metadata) plus the
+  invocation. Parsing the full 1 MB library dominated render time on 0.1 CPU.
+* EPS: ``gs -sDEVICE=eps2write`` flattens the program into a vector EPS with a
+  tight ``%%BoundingBox``; text is converted to outlines (``-dNoOutputFonts``) so
+  print shops don't depend on font substitution. Exact physical size.
+* PNG: one ``pnggray`` pass on a page large enough for the symbol, then cropped
+  with Pillow. Modules are snapped to whole pixels (and BWIPP's ink spread is
+  disabled) so bars don't get uneven widths at low DPI.
 
 Every Ghostscript call uses ``-dSAFER``, stdin/stdout (no temp files) and a timeout.
 """
 
+import io
+import re
 import shutil
 import subprocess
 from binascii import hexlify
@@ -19,16 +24,24 @@ from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 
+from PIL import Image, ImageOps
+
 from app.core.config import get_settings
 
 GS1_MODULE_MM = 0.33
 """Nominal EAN-13 module width (X-dimension) at 100 % magnification."""
 
-_BWIPP_MODULE_MM = 25.4 / 72
-"""BWIPP draws one module per PostScript point."""
+_MM_PER_POINT = 25.4 / 72
+"""BWIPP draws one module per PostScript point (before magnification)."""
 
-_PAGE_POINTS = 3000
-_ORIGIN_POINTS = 200
+_EPS_PAGE_POINTS = 3000
+_EPS_ORIGIN_POINTS = 200
+
+# EAN-13 extent in modules around the origin: leading digit/text sit left of and
+# below the bars; 95 modules of bars. Used to size the PNG page.
+_EAN13_MARGIN_MODULES = 20
+_EAN13_PAGE_WIDTH_MODULES = 140
+_EAN13_PAGE_EXTRA_HEIGHT_MODULES = 40
 
 _GS_BASE_ARGS = ("-dSAFER", "-dQUIET", "-dNOPAUSE", "-dBATCH")
 
@@ -55,6 +68,11 @@ _PROGRAM_TEMPLATE = """\
 }} if
 """
 
+_BWIPP_BLOCK = re.compile(
+    r"^% --BEGIN (RESOURCE|ENCODER|RENDERER) (\w+)--\n.*?^% --END \1 \2--\n", re.S | re.M
+)
+_BWIPP_REQUIRES = re.compile(r"^% --REQUIRES ([\w ]+)--$", re.M)
+
 
 class RenderError(Exception):
     """Ghostscript or BWIPP failed to produce the barcode."""
@@ -70,58 +88,80 @@ class RenderOptions:
     @property
     def magnification(self) -> float:
         """PostScript scale factor so that one module is ``GS1_MODULE_MM * scale``."""
-        return self.scale * GS1_MODULE_MM / _BWIPP_MODULE_MM
+        return self.scale * GS1_MODULE_MM / _MM_PER_POINT
 
 
 def render_ean13_eps(code: str, options: RenderOptions) -> bytes:
-    """Vector EPS with text converted to outlines."""
-    return _render_eps("ean13", code, _ean13_bwipp_options(options), options, outline_text=True)
+    """Vector EPS at exact physical size, text converted to outlines."""
+    magnification = options.magnification
+    program = _build_program(
+        "ean13",
+        code,
+        _ean13_bwipp_options(options, magnification),
+        magnification=magnification,
+        origin=_EPS_ORIGIN_POINTS,
+    )
+    return _run_ghostscript(
+        "-sDEVICE=eps2write",
+        f"-dDEVICEWIDTHPOINTS={_EPS_PAGE_POINTS}",
+        f"-dDEVICEHEIGHTPOINTS={_EPS_PAGE_POINTS}",
+        "-dNoOutputFonts",
+        stdin=program,
+    )
 
 
 def render_ean13_png(code: str, options: RenderOptions) -> bytes:
     """Grayscale PNG at ``options.dpi`` (stored in the ``pHYs`` chunk)."""
-    eps = _render_eps("ean13", code, _ean13_bwipp_options(options), options, outline_text=False)
-    return _run_ghostscript(
+    dpi = options.dpi
+    module_px = max(1, round(GS1_MODULE_MM * options.scale / 25.4 * dpi))
+    magnification = module_px * 72 / dpi  # points per module
+    origin = _snap_to_pixel(_EAN13_MARGIN_MODULES * magnification, dpi)
+    bar_height_points = options.bar_height_mm / _MM_PER_POINT
+
+    program = _build_program(
+        "ean13",
+        code,
+        {**_ean13_bwipp_options(options, magnification), "inkspread": "0"},
+        magnification=magnification,
+        origin=origin,
+    )
+    raster = _run_ghostscript(
         "-sDEVICE=pnggray",
-        "-dEPSCrop",
-        f"-r{options.dpi}",
+        f"-dDEVICEWIDTHPOINTS={_EAN13_PAGE_WIDTH_MODULES * magnification:.4f}",
+        f"-dDEVICEHEIGHTPOINTS="
+        f"{bar_height_points + _EAN13_PAGE_EXTRA_HEIGHT_MODULES * magnification:.4f}",
+        f"-r{dpi}",
         # Antialias text only: bars stay crisp, which scanners prefer.
         "-dTextAlphaBits=4",
         "-dGraphicsAlphaBits=1",
-        stdin=eps,
+        stdin=program,
     )
+    return _crop_to_content(raster, dpi)
 
 
-def _ean13_bwipp_options(options: RenderOptions) -> dict[str, str | bool]:
+def _ean13_bwipp_options(options: RenderOptions, magnification: float) -> dict[str, str | bool]:
     # BWIPP's height is in inches and gets multiplied by the magnification,
     # so divide it out to obtain the requested physical bar height.
-    height_in = options.bar_height_mm / 25.4 / options.magnification
+    height_in = options.bar_height_mm / 25.4 / magnification
     return {"includetext": options.include_text, "height": f"{height_in:.6f}"}
 
 
-def _render_eps(
+def _build_program(
     encoder: str,
     data: str,
     bwipp_options: dict[str, str | bool],
-    options: RenderOptions,
     *,
-    outline_text: bool,
+    magnification: float,
+    origin: float,
 ) -> bytes:
-    program = _PROGRAM_TEMPLATE.format(
-        bwipp=_load_bwipp(),
-        origin=_ORIGIN_POINTS,
-        magnification=f"{options.magnification:.6f}",
+    return _PROGRAM_TEMPLATE.format(
+        bwipp=_load_bwipp(encoder),
+        origin=f"{origin:.6f}",
+        magnification=f"{magnification:.6f}",
         data=_ps_hex_string(data),
         options=_ps_hex_string(_format_bwipp_options(bwipp_options)),
         encoder=_ps_hex_string(encoder),
-    )
-    return _run_ghostscript(
-        "-sDEVICE=eps2write",
-        f"-dDEVICEWIDTHPOINTS={_PAGE_POINTS}",
-        f"-dDEVICEHEIGHTPOINTS={_PAGE_POINTS}",
-        *(("-dNoOutputFonts",) if outline_text else ()),
-        stdin=program.encode("ascii"),
-    )
+    ).encode("ascii")
 
 
 def _run_ghostscript(*device_args: str, stdin: bytes) -> bytes:
@@ -141,14 +181,44 @@ def _run_ghostscript(*device_args: str, stdin: bytes) -> bytes:
     return result.stdout
 
 
+def _crop_to_content(png: bytes, dpi: int) -> bytes:
+    image = Image.open(io.BytesIO(png))
+    box = ImageOps.invert(image.convert("L")).getbbox()
+    if box is None:
+        raise RenderError("Ghostscript generó una imagen vacía")
+    output = io.BytesIO()
+    image.crop(box).save(output, format="PNG", dpi=(dpi, dpi))
+    return output.getvalue()
+
+
+def _snap_to_pixel(points: float, dpi: int) -> float:
+    return round(points / 72 * dpi) * 72 / dpi
+
+
 # BWIPP is passed inline because SAFER mode forbids the PS code from reading files.
 @cache
-def _load_bwipp() -> str:
-    return (
+def _load_bwipp(encoder: str) -> str:
+    """BWIPP resources needed by ``encoder``, in library order (dependencies first)."""
+    library = (
         resources.files("treepoem")
         .joinpath("postscriptbarcode/barcode.ps")
         .read_text(encoding="utf-8")
     )
+    blocks = {match.group(2): match.group(0) for match in _BWIPP_BLOCK.finditer(library)}
+
+    needed: set[str] = set()
+    pending = [encoder]
+    while pending:
+        name = pending.pop()
+        if name in needed:
+            continue
+        if name not in blocks:
+            raise RenderError(f"Recurso BWIPP desconocido: {name}")
+        needed.add(name)
+        if requires := _BWIPP_REQUIRES.search(blocks[name]):
+            pending.extend(requires.group(1).split())
+
+    return "".join(block for name, block in blocks.items() if name in needed)
 
 
 @cache

@@ -13,6 +13,7 @@ from app.services.renderer import (
     GS1_MODULE_MM,
     RenderError,
     RenderOptions,
+    _load_bwipp,
     render_ean13_eps,
     render_ean13_png,
 )
@@ -59,21 +60,29 @@ def page_content(eps: bytes) -> bytes:
 
 
 @pytest.mark.parametrize("include_text", [True, False])
-def test_png_decodes_to_expected_code(include_text: bool) -> None:
-    png = render_ean13_png(CODE, RenderOptions(include_text=include_text))
+@pytest.mark.parametrize("scale", [1, 2, 5])
+@pytest.mark.parametrize("dpi", [150, 300, 600])
+def test_png_decodes_for_every_option_combination(include_text: bool, scale: int, dpi: int) -> None:
+    options = RenderOptions(include_text=include_text, scale=scale, dpi=dpi)
 
-    assert decode(png) == [CODE]
+    assert decode(render_ean13_png(CODE, options)) == [CODE]
 
 
-def test_png_size_follows_scale_and_dpi() -> None:
-    options = RenderOptions(include_text=False, scale=2, dpi=300)
+@pytest.mark.parametrize(("scale", "dpi"), [(1, 150), (2, 300), (3, 600)])
+def test_png_modules_are_whole_pixels_and_size_follows_options(scale: int, dpi: int) -> None:
+    options = RenderOptions(include_text=False, scale=scale, dpi=dpi, bar_height_mm=30)
 
     image = Image.open(io.BytesIO(render_ean13_png(CODE, options)))
 
-    expected_width_px = EAN13_MODULES * GS1_MODULE_MM * 2 / 25.4 * 300
-    assert image.width == pytest.approx(expected_width_px, rel=0.02)
-    assert image.height == pytest.approx(22.85 / 25.4 * 300, rel=0.02)
-    assert image.info["dpi"] == pytest.approx((300, 300), abs=0.01)
+    module_px = round(GS1_MODULE_MM * scale / 25.4 * dpi)
+    assert image.width == EAN13_MODULES * module_px
+    # Snapping keeps the physical size close to the requested one.
+    assert image.width / dpi * 25.4 == pytest.approx(
+        EAN13_MODULES * GS1_MODULE_MM * scale, rel=0.03
+    )
+    assert image.height == pytest.approx(30 / 25.4 * dpi, abs=1)
+    # PNG stores whole pixels per metre, so 150 dpi reads back as ~150.012.
+    assert image.info["dpi"] == pytest.approx((dpi, dpi), abs=0.05)
 
 
 def test_png_dpi_changes_resolution_not_physical_size() -> None:
@@ -81,7 +90,6 @@ def test_png_dpi_changes_resolution_not_physical_size() -> None:
     high = Image.open(io.BytesIO(render_ean13_png(CODE, RenderOptions(dpi=600))))
 
     assert high.width / low.width == pytest.approx(4, rel=0.02)
-    assert decode(render_ean13_png(CODE, RenderOptions(dpi=150))) == [CODE]
 
 
 # ---------- EPS ----------
@@ -157,10 +165,28 @@ def test_ghostscript_uses_safer_stdio_and_timeout(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(subprocess, "run", spy)
 
     render_ean13_png(CODE, RenderOptions())
+    render_ean13_eps(CODE, RenderOptions())
 
-    assert len(calls) == 2
+    assert len(calls) == 2  # one Ghostscript process per file
     for call in calls:
         assert "-dSAFER" in call["args"]
         assert call["args"][-2:] == ["-sOutputFile=-", "-"]
         assert call["timeout"] == get_settings().ghostscript_timeout_seconds
         assert call["input"]
+
+
+# ---------- BWIPP subset ----------
+
+
+def test_bwipp_subset_contains_encoder_and_its_dependencies_only() -> None:
+    subset = _load_bwipp("ean13")
+
+    for resource in ("preamble", "renlinear", "ean5", "ean2", "ean13"):
+        assert re.search(rf"^% --BEGIN \w+ {resource}--$", subset, re.M), resource
+    assert not re.search(r"^% --BEGIN \w+ qrcode--$", subset, re.M)
+    assert len(subset) < 100_000  # vs ~1 MB for the full library
+
+
+def test_bwipp_unknown_encoder_raises_render_error() -> None:
+    with pytest.raises(RenderError, match="desconocido"):
+        _load_bwipp("not-a-barcode")
