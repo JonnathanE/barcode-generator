@@ -72,10 +72,204 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/batch/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Template */
+        get: operations["download_template_api_v1_batch_template_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/batch/{symbology}/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get Batch Limits
+         * @description Máximo de filas para estas opciones: los PNG muy grandes lo reducen (RF-19).
+         */
+        post: operations["get_batch_limits_api_v1_batch__symbology__limits_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/batch/{symbology}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate Batch File
+         * @description Paso 1: reporte por fila sin generar imágenes (RF-12).
+         */
+        post: operations["validate_batch_file_api_v1_batch__symbology__validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/batch/{symbology}/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Batch Zip
+         * @description Paso 2: genera las filas válidas y devuelve un ZIP (RF-14, RF-15).
+         */
+        post: operations["generate_batch_zip_api_v1_batch__symbology__generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BatchLimitsRequest */
+        BatchLimitsRequest: {
+            /**
+             * Formats
+             * @example [
+             *       "png",
+             *       "eps"
+             *     ]
+             */
+            formats: components["schemas"]["OutputFormat"][];
+            options?: components["schemas"]["RenderOptionsIn"];
+        };
+        /** BatchLimitsResponse */
+        BatchLimitsResponse: {
+            /**
+             * Max Rows
+             * @description Filas válidas que se pueden generar con estas opciones.
+             */
+            max_rows: number;
+            /** Max Upload Mb */
+            max_upload_mb: number;
+            /**
+             * Png Width Px
+             * @description Tamaño de cada PNG (si se pide PNG).
+             */
+            png_width_px: number | null;
+            /** Png Height Px */
+            png_height_px: number | null;
+        };
+        /** BatchRowOut */
+        BatchRowOut: {
+            /**
+             * Row
+             * @description Número de fila en Excel.
+             * @example 2
+             */
+            row: number;
+            /**
+             * Input
+             * @description Valor original de la celda.
+             * @example 786123456789
+             */
+            input: string;
+            /**
+             * Normalized
+             * @example 7861234567898
+             */
+            normalized: string | null;
+            status: components["schemas"]["RowStatus"];
+            /**
+             * Message
+             * @example El dígito de control debe ser 8.
+             */
+            message: string;
+            /**
+             * Filename
+             * @description Nombre del archivo en el ZIP (sin extensión); solo filas válidas.
+             * @example leche-entera
+             */
+            filename: string | null;
+        };
+        /** BatchSummaryOut */
+        BatchSummaryOut: {
+            /** Total */
+            total: number;
+            /** Valid */
+            valid: number;
+            /** Errors */
+            errors: number;
+            /** Duplicates */
+            duplicates: number;
+        };
+        /** BatchValidateResponse */
+        BatchValidateResponse: {
+            summary: components["schemas"]["BatchSummaryOut"];
+            /** Rows */
+            rows: components["schemas"]["BatchRowOut"][];
+        };
+        /** Body_generate_batch_zip_api_v1_batch__symbology__generate_post */
+        Body_generate_batch_zip_api_v1_batch__symbology__generate_post: {
+            /**
+             * File
+             * @description Archivo .xlsx (se lee la primera hoja).
+             */
+            file: string;
+            /**
+             * Formats
+             * @description Uno o más: png, eps.
+             */
+            formats: components["schemas"]["OutputFormat"][];
+            /**
+             * Options
+             * @description Opciones de render en JSON (mismas que /barcodes/render).
+             * @default {}
+             */
+            options: string;
+            /**
+             * Restore Leading Zeros
+             * @description Completar con ceros a la izquierda los números de 11 o 12 dígitos (Excel quita los ceros iniciales de las celdas numéricas).
+             * @default false
+             */
+            restore_leading_zeros: boolean;
+        };
+        /** Body_validate_batch_file_api_v1_batch__symbology__validate_post */
+        Body_validate_batch_file_api_v1_batch__symbology__validate_post: {
+            /**
+             * File
+             * @description Archivo .xlsx (se lee la primera hoja).
+             */
+            file: string;
+            /**
+             * Restore Leading Zeros
+             * @description Completar con ceros a la izquierda los números de 11 o 12 dígitos (Excel quita los ceros iniciales de las celdas numéricas).
+             * @default false
+             */
+            restore_leading_zeros: boolean;
+        };
         /**
          * ErrorCode
          * @enum {string}
@@ -190,6 +384,11 @@ export interface components {
             format: components["schemas"]["OutputFormat"];
             options?: components["schemas"]["RenderOptionsIn"];
         };
+        /**
+         * RowStatus
+         * @enum {string}
+         */
+        RowStatus: "ok" | "error" | "duplicado";
         /** SymbologyOut */
         SymbologyOut: {
             /**
@@ -361,6 +560,248 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    download_template_api_v1_batch_template_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plantilla .xlsx. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": unknown;
+                };
+            };
+        };
+    };
+    get_batch_limits_api_v1_batch__symbology__limits_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbology: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchLimitsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchLimitsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    validate_batch_file_api_v1_batch__symbology__validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbology: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_validate_batch_file_api_v1_batch__symbology__validate_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchValidateResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Length Required */
+            411: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    generate_batch_zip_api_v1_batch__symbology__generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbology: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_generate_batch_zip_api_v1_batch__symbology__generate_post"];
+            };
+        };
+        responses: {
+            /** @description ZIP con png/, eps/ y reporte.csv. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Length Required */
+            411: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };
