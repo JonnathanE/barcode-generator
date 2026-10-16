@@ -18,10 +18,14 @@ updates:
         update-types: [minor, patch]
 
   # python:3.12-slim trae Ghostscript de Debian: las imágenes nuevas incluyen sus parches.
+  # El proyecto fija Python 3.12 (PLAN.md, pyproject.toml): no proponer 3.13+.
   - package-ecosystem: docker
     directory: /backend
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]
 
   - package-ecosystem: github-actions
     directory: /
