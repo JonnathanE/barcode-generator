@@ -89,7 +89,10 @@ async function call<T>(request: () => Promise<{ data?: T; error?: unknown; respo
 }
 
 export async function getHealth(signal?: AbortSignal) {
-  const { data } = await call(() => client.GET('/health', { signal }))
+  // One request covers a Render cold start (~25 s): Render holds it until the app is up.
+  const { data } = await call(() =>
+    client.GET('/health', { signal: withTimeout(TIMEOUT_MS.single, signal) }),
+  )
   return data
 }
 
