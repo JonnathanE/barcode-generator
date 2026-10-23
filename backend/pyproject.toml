@@ -3,7 +3,7 @@ name = "barcode-backend"
 version = "1.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi>=0.143.2",
+    "fastapi>=0.150.0",
     "openpyxl>=3.1.5",
     "pillow>=12.3.0",
     "pydantic-settings>=2.16.0",
@@ -15,7 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx2>=2.13.1",
+    "httpx2>=2.15.1",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
